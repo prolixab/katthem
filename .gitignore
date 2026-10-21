@@ -1,0 +1,17 @@
+# Lokal databas och genererade inloggningsuppgifter
+/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Hemligheter och lokal konfiguration
+.env
+.env.*
+!.env.example
+
+# Beroenden och tillfälliga filer
+node_modules/
+*.log
+coverage/
+.DS_Store
+Thumbs.db
