@@ -24,7 +24,7 @@ if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
  writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Startkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`,{mode:0o600});
  const monday=new Date();monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
  const insert=db.prepare('INSERT INTO slots(date,start,end,title,capacity,note) VALUES(?,?,?,?,?,?)');
- for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','10:00','Morgonpass'],['17:00','19:00','Kvällspass']])insert.run(localDate(date),start,end,title,2,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');}
+ for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']])insert.run(localDate(date),start,end,title,2,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');}
 }
 const publicUser=u=>({id:u.id,name:u.name,email:u.email,role:u.role,active:u.active});
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};

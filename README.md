@@ -28,7 +28,7 @@ Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https:/
 ## Funktioner
 
 - Inloggning med separata roller och lösenord lagrade med salt och scrypt.
-- Veckoschema med sex veckors morgon- och kvällspass från första starten.
+- Veckoschema med sex veckors pass kl. 08–12, 16–18 och 18–20 från första starten.
 - Bokning med kapacitetskontroll, skydd mot dubbelbokning och överlappande pass.
 - Mina bokningar och avbokning fram till 24 timmar innan passet.
 - Administratören kan lägga till och inaktivera volontärer, skapa och ställa in pass samt boka och avboka åt andra.
