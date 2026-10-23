@@ -1,4 +1,4 @@
-# Katthemmet – lokal första version
+# Katthemmet
 
 Kräver Node.js 24 eller senare. Inga paket behöver installeras.
 
@@ -7,6 +7,23 @@ Kräver Node.js 24 eller senare. Inga paket behöver installeras.
 Dubbelklicka på **Starta katthemmet.cmd**, eller kör `npm start` i denna mapp. Öppna http://127.0.0.1:3080. Stäng terminalen för att stoppa appen. Appen lyssnar bara på den här datorn.
 
 Vid första starten skapas ett administratörskonto och ett volontärkonto med slumpade lösenord. Uppgifterna ligger i **data/lokala-konton.txt**. Byt lösenord under Mitt konto. Filen med startlösenorden uppdateras inte vid lösenordsbyte och kan därefter raderas.
+
+## Driftsättning i Coolify
+
+1. Skapa en applikation från detta Git-repository och välj **Docker Compose** som byggmetod. Använd rotmappen och `/docker-compose.yml` som Compose-fil. Compose bygger appens image med den befintliga Dockerfilen.
+2. Koppla din HTTPS-domän till tjänsten **`katthem`**, internport **3080**, i Coolify. Låt Coolifys proxy hantera TLS och aktivera omdirigering till HTTPS. Compose exponerar endast internporten; ingen port publiceras direkt på servern.
+3. Ange `APP_URL=https://din-domän.se` i Coolifys miljövariabler, med exakt den adress som användarna öppnar (utan sökväg). Variabeln är obligatorisk i Compose och produktionsstart kräver HTTPS. Övriga runtime-inställningar finns i Compose-filen. `.env.example` visar den enda variabel som behöver fyllas i. Vid fristående Docker Compose kan den kopieras till `.env`; lokal `npm start` läser inte `.env` automatiskt.
+4. Compose skapar en **namngiven persistent volym** `katthem-data` med destination **`/app/data`**. Kontrollera den parsade lagringen i Coolify före första driftsättningen. Kör en instans på en server; använd inte flera repliker eller flera containrar samtidigt mot samma SQLite-fil. Vid manuella bind mounts måste katalogen vara skrivbar för containeranvändaren `node` (UID/GID 1000).
+5. Driftsätt. Dockerfilens health check anropar `GET /healthz` på internporten och kontrollerar att databasen svarar. Endpointen kräver ingen inloggning.
+6. Öppna Coolifys containerterminal och kör `cat /app/data/lokala-konton.txt` för att hämta de slumpade startlösenorden. Logga in som `admin@katthem.local`, byt lösenord och skapa riktiga volontärkonton. Inaktivera exempelfrivilligen `alex@katthem.local` och radera startlösenordsfilen när den inte behövs. Uppgifterna skrivs inte till applikationsloggen.
+
+Sessionscookies får flaggan `Secure` i produktion. Skrivande API-anrop med en Origin-header måste matcha `APP_URL`; proxyheaders används inte för att avgöra tillåtet ursprung. Inloggningsbegränsningen gäller per direkt anslutande IP-adress, vilket bakom Coolifys proxy kan innebära en gemensam gräns på 15 försök per minut.
+
+Verifiera efter driftsättning att inloggning, bokning och utloggning fungerar via HTTPS och att bokningarna finns kvar efter en omdriftsättning. För migrering av befintlig lokal data: stoppa båda instanserna, kopiera hela data-mappen till volymen, kontrollera ägarskap och starta sedan containern.
+
+Compose hanterar volym, miljövariabler, omstartspolicy och avstängning; health check ärvs från Dockerfilen. Ta inte bort volymen vid omdriftsättning (`docker compose down -v` raderar data). Om appen redan körs som en Dockerfile-applikation måste befintlig data migreras till Compose-volymen före bytet, eftersom den får ett annat namn.
+
+Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https://coolify.io/docs/core/docker-and-containers), [applikationsinställningar](https://coolify.io/docs/applications/configuration/general) och [persistent lagring](https://coolify.io/docs/core/persistent-storage/storage-mounts/overview).
 
 ## Funktioner
 
@@ -21,11 +38,13 @@ Vid första starten skapas ett administratörskonto och ett volontärkonto med s
 
 All data sparas lokalt i **data/katthem.sqlite**. Stoppa appen och kopiera data-mappen till en säker plats för en fullständig säkerhetskopia. CSV är en rapport och ersätter inte en databaskopia. Lägg inte databasen i en offentligt delad mapp.
 
+I Coolify ligger samma filer i `/app/data` på den beständiga volymen. Volymen ersätter inte säkerhetskopior: stoppa applikationen före filkopiering, spara kopian utanför driftservern och prova återställning. Ta säkerhetskopia före uppdateringar. På en ny server återställs filerna till en volym med samma destination och skrivbehörighet före appstart.
+
 Pass använder datorns lokala tid. Använd svensk tidszon på datorn. Inaktivering tar inte bort befintliga bokningar; administratören hanterar dessa i schemat. Inställning av ett pass tar bort dess bokningar efter bekräftelse.
 
 ## Nästa version
 
-Automatisk Google Sheets-synkning, e-postpåminnelser, lösenordsåterställning, återkommande personliga bokningar och ändring av befintliga pass ingår inte ännu. Nya pass skapas var för sig; de första sex veckorna läggs in automatiskt. För användning från flera datorer behövs gemensam drift, HTTPS, säkerhetskopiering och konfiguration av e-post. Publicera inte denna lokala server direkt på internet.
+Automatisk Google Sheets-synkning, e-postpåminnelser, lösenordsåterställning, återkommande personliga bokningar och ändring av befintliga pass ingår inte ännu. Nya pass skapas var för sig; de första sex veckorna läggs in automatiskt. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
 
 ## Verifiering
 

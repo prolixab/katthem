@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 const dir=mkdtempSync(path.join(tmpdir(),'katthem-test-'));
 let child,base;
-async function start(){child=spawn(process.execPath,['server.mjs'],{cwd:import.meta.dirname,env:{...process.env,DATA_DIR:dir,PORT:'0'},stdio:['ignore','pipe','pipe']});base=await new Promise((resolve,reject)=>{child.stdout.on('data',b=>{const m=b.toString().match(/http:\/\/127\.0\.0\.1:\d+/);if(m)resolve(m[0])});child.on('error',reject);child.on('exit',code=>reject(Error('Server exit '+code)))});}
+async function start(env={}){child=spawn(process.execPath,['server.mjs'],{cwd:import.meta.dirname,env:{...process.env,NODE_ENV:'test',HOST:'127.0.0.1',APP_URL:'',...env,DATA_DIR:dir,PORT:'0'},stdio:['ignore','pipe','pipe']});base=await new Promise((resolve,reject)=>{child.stdout.on('data',b=>{const m=b.toString().match(/http:\/\/[^\s:]+:\d+/);if(m)resolve(m[0].replace('0.0.0.0','127.0.0.1'))});child.on('error',reject);child.on('exit',code=>reject(Error('Server exit '+code)))});}
 async function stop(){if(!child||child.exitCode!==null)return;await new Promise(r=>{child.once('exit',r);child.kill()})}
 async function call(route,method='GET',data,cookie){return fetch(base+'/api/'+route,{method,headers:{...(cookie?{cookie}:{}),...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined})}
 test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',async()=>{
@@ -33,5 +33,18 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const vstate=await(await call('state','GET',null,vc)).json();assert.deepEqual(vstate.users,[]);
  assert.equal((await call('users/'+vstate.user.id,'PATCH',{active:0},ac)).status,200);assert.equal((await call('state','GET',null,vc)).status,401);
  const blocked=await fetch(base+'/api/slots',{method:'POST',headers:{cookie:ac,origin:'http://other.invalid','Content-Type':'application/json'},body:'{}'});assert.equal(blocked.status,403);
+ await stop();await start({NODE_ENV:'production',HOST:'0.0.0.0',APP_URL:'https://katthem.example.se'});
+ const health=await fetch(base+'/healthz');assert.equal(health.status,200);assert.deepEqual(await health.json(),{ok:true});
+ assert.equal((await fetch(base+'/data/lokala-konton.txt')).status,404);
+ const loginData=JSON.stringify({email:'admin@katthem.local',password:passwords[0]});
+ const productionLogin=await fetch(base+'/api/login',{method:'POST',headers:{origin:'https://katthem.example.se','Content-Type':'application/json'},body:loginData});
+ assert.equal(productionLogin.status,200);assert.match(productionLogin.headers.get('set-cookie'),/; Secure/);
+ const pc=productionLogin.headers.get('set-cookie').split(';')[0];
+ for(const origin of ['https://other.invalid','http://katthem.example.se']){
+  assert.equal((await fetch(base+'/api/logout',{method:'POST',headers:{origin,cookie:pc}})).status,403);
+ }
+ const logout=await fetch(base+'/api/logout',{method:'POST',headers:{origin:'https://katthem.example.se',cookie:pc}});
+ assert.equal(logout.status,200);assert.match(logout.headers.get('set-cookie'),/; Secure/);
+ assert.equal((await call('state','GET',null,pc)).status,401);
  }finally{await stop();rmSync(dir,{recursive:true,force:true})}
 });

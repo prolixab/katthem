@@ -1,0 +1,22 @@
+services:
+  katthem:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL to the public HTTPS origin}
+      HOST: 0.0.0.0
+      PORT: "3080"
+      DATA_DIR: /app/data
+      TZ: Europe/Stockholm
+    expose:
+      - "3080"
+    volumes:
+      - katthem-data:/app/data
+
+volumes:
+  katthem-data:

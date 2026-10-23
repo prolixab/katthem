@@ -5,6 +5,11 @@ import { readFileSync, mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 const root=path.dirname(fileURLToPath(import.meta.url));
+const production=process.env.NODE_ENV==='production';
+const host=process.env.HOST||'127.0.0.1';
+const appOrigin=process.env.APP_URL?new URL(process.env.APP_URL).origin:null;
+if(production&&(!appOrigin||!appOrigin.startsWith('https://')))throw new Error('Production requires APP_URL with an HTTPS origin.');
+const cookieOptions=`HttpOnly; SameSite=Strict; Path=/${production?'; Secure':''}`;
 const dataDir=process.env.DATA_DIR||path.join(root,'data');
 mkdirSync(dataDir,{recursive:true});
 const db=new DatabaseSync(path.join(dataDir,'katthem.sqlite'));
@@ -16,7 +21,7 @@ if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
  const admin=randomBytes(9).toString('base64url'), volunteer=randomBytes(9).toString('base64url');
  db.prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)').run('Administratör','admin@katthem.local',hash(admin),'admin');
  db.prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)').run('Alex Volontär','alex@katthem.local',hash(volunteer),'volunteer');
- writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Lokala testkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`);
+ writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Startkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`,{mode:0o600});
  const monday=new Date();monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
  const insert=db.prepare('INSERT INTO slots(date,start,end,title,capacity,note) VALUES(?,?,?,?,?,?)');
  for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','10:00','Morgonpass'],['17:00','19:00','Kvällspass']])insert.run(localDate(date),start,end,title,2,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');}
@@ -32,8 +37,9 @@ const server=http.createServer(async(req,res)=>{
  const send=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data))};
  try{
  const url=new URL(req.url,'http://localhost');
+ if(url.pathname==='/healthz'&&req.method==='GET'){db.prepare('SELECT 1').get();return send({ok:true})}
  if(url.pathname.startsWith('/api/')){
- if(!['GET','HEAD'].includes(req.method)&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`)fail('Begäran blockerades.',403);
+ if(!['GET','HEAD'].includes(req.method)&&req.headers.origin&&req.headers.origin!==(appOrigin||`http://${req.headers.host}`))fail('Begäran blockerades.',403);
  const token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('session='))?.slice(8);
  let user=token?sessions.get(token,Date.now()):null;
  if(url.pathname==='/api/login'&&req.method==='POST'){
@@ -41,10 +47,10 @@ const server=http.createServer(async(req,res)=>{
  const p=await body(req);user=db.prepare('SELECT * FROM users WHERE email=? AND active=1').get(String(p.email).trim().toLowerCase());
  if(!user||typeof p.password!=='string'||!verify(p.password,user.password))fail('Fel e-post eller lösenord.',401);
  const t=randomBytes(32).toString('hex');db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(t,user.id,Date.now()+86400000);
- res.setHeader('Set-Cookie',`session=${t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`);return send(snapshot(user));}
+ res.setHeader('Set-Cookie',`session=${t}; ${cookieOptions}; Max-Age=86400`);return send(snapshot(user));}
  if(!user)fail('Logga in för att fortsätta.',401);
  if(url.pathname==='/api/state'&&req.method==='GET')return send(snapshot(user));
- if(url.pathname==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(token);res.setHeader('Set-Cookie','session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return send({ok:true})}
+ if(url.pathname==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(token);res.setHeader('Set-Cookie',`session=; ${cookieOptions}; Max-Age=0`);return send({ok:true})}
  if(url.pathname==='/api/password'&&req.method==='POST'){const p=await body(req);if(typeof p.current!=='string'||!verify(p.current,user.password))fail('Nuvarande lösenord stämmer inte.');if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');db.prepare('UPDATE users SET password=? WHERE id=?').run(hash(p.password),user.id);db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(user.id,token);return send({ok:true})}
  if(url.pathname==='/api/bookings'&&req.method==='POST'){
  const p=await body(req),uid=user.role==='admin'&&p.userId?Number(p.userId):user.id;
@@ -75,4 +81,8 @@ const server=http.createServer(async(req,res)=>{
  res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.'},e.status||500)}
 });
-server.listen(Number(process.env.PORT||3080),'127.0.0.1',()=>console.log(`Katthemmet: http://127.0.0.1:${server.address().port}`));
+server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Katthemmet: http://${host}:${server.address().port}`));
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{
+ server.close(()=>{db.close();process.exit(0)});
+ setTimeout(()=>process.exit(1),10000).unref();
+});
