@@ -29,10 +29,13 @@ Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https:/
 
 - Inloggning med separata roller och lösenord lagrade med salt och scrypt.
 - Veckoschema med sex veckors pass kl. 08–12, 16–18 och 18–20 från första starten.
-- Bokning med kapacitetskontroll, skydd mot dubbelbokning och överlappande pass.
+- Bokning utan övre deltagargräns, minst två volontärer per pass och skydd mot dubbelbokning och överlappande pass.
 - Mina bokningar och avbokning fram till 24 timmar innan passet.
 - Administratören kan lägga till och inaktivera volontärer, skapa och ställa in pass samt boka och avboka åt andra.
+- Administratörens volontärlista visar genomförda pass. Bokningar på avslutade, ej inställda pass räknas; volontärer med fler än 15 pass markeras grönt. Detta är en beräkning utifrån bokningar, inte närvaroregistrering.
 - CSV-export med semikolon som avgränsare. I Google Sheets: Arkiv → Importera → Ladda upp, välj filen och semikolon som avgränsare vid behov.
+
+Söndagar 18–20 träffas socialiseringsgruppen för ordinarie uppgifter och socialiseringsträning med katterna. Volontärer anmäler sig via bokningen. Första söndagen varje månad är det öppet hus och passet 16–18 visas som inställt. Befintliga pass uppdateras automatiskt vid första starten med dessa regler. Bokningar behålls, även på inställda pass, så administratören kan kontakta berörda. En databaskopia sparas före uppdateringen som `data/schema-v1-backup.sqlite`.
 
 ## Data och säkerhetskopia
 
@@ -49,3 +52,9 @@ Automatisk Google Sheets-synkning, e-postpåminnelser, lösenordsåterställning
 ## Verifiering
 
 Kör `npm test` för integrationstester av autentisering, behörighet, bokning och datalagring. Testerna använder en separat tillfällig databas.
+
+## Passantal, grönmarkering och volontärimport
+
+Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Fler än 15 genomförda pass ger också automatiskt grönmarkering. Att ta bort en manuell markering tar inte bort den automatiska.
+
+Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;lösenord;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Varje rad kräver ett lösenord på 10–200 tecken. Befintliga eller dubblerade e-postadresser stoppar hela importen. Inga e-postmeddelanden skickas; lämna kontouppgifterna personligen.
