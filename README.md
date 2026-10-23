@@ -29,7 +29,7 @@ Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https:/
 
 - Inloggning med separata roller och lösenord lagrade med salt och scrypt.
 - Veckoschema med sex veckors pass kl. 08–12, 16–18 och 18–20 från första starten.
-- Bokning utan övre deltagargräns, minst två volontärer per pass och skydd mot dubbelbokning och överlappande pass.
+- Bokning med rekommenderat tak på sju deltagare (fler kan boka efter bekräftelse), minst två volontärer per pass och skydd mot dubbelbokning och överlappande pass.
 - Mina bokningar och avbokning fram till 24 timmar innan passet.
 - Administratören kan lägga till och inaktivera volontärer, skapa och ställa in pass samt boka och avboka åt andra.
 - Administratörens volontärlista visar genomförda pass. Bokningar på avslutade, ej inställda pass räknas; volontärer med fler än 15 pass markeras grönt. Detta är en beräkning utifrån bokningar, inte närvaroregistrering.
@@ -47,7 +47,7 @@ Pass använder datorns lokala tid. Använd svensk tidszon på datorn. Inaktiveri
 
 ## Nästa version
 
-Automatisk Google Sheets-synkning, e-postpåminnelser, lösenordsåterställning, återkommande personliga bokningar och ändring av befintliga pass ingår inte ännu. Nya pass skapas var för sig; de första sex veckorna läggs in automatiskt. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
+Automatisk Google Sheets-synkning, lösenordsåterställning, återkommande personliga bokningar och ändring av befintliga pass ingår inte ännu. Nya pass skapas var för sig; de första sex veckorna läggs in automatiskt. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
 
 ## Verifiering
 
@@ -58,3 +58,31 @@ Kör `npm test` för integrationstester av autentisering, behörighet, bokning o
 Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Fler än 15 genomförda pass ger också automatiskt grönmarkering. Att ta bort en manuell markering tar inte bort den automatiska.
 
 Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;lösenord;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Varje rad kräver ett lösenord på 10–200 tecken. Befintliga eller dubblerade e-postadresser stoppar hela importen. Inga e-postmeddelanden skickas; lämna kontouppgifterna personligen.
+
+## Lokal drift från Windows-nätverksenhet
+
+Om repot ligger på en nätverksenhet används %LOCALAPPDATA%\Katthem\data för SQLite och startkonton. Befintlig data måste kopieras dit medan appen är stoppad; originalet kan behållas som arkiv. Använd den lokala datamappen för säkerhetskopior och för aktuella startuppgifter i lokala-konton.txt. DATA_DIR kan anges uttryckligen för annan lagring. Docker använder fortfarande /app/data.
+
+## Administratörer, öppet hus och påminnelser
+
+Admin kan skapa konton med rollen Administratör eller Volontär under Lägg till konto. Befintliga konton kan byta roll med en bekräftelse; egen roll och egen aktivering kan inte ändras. CSV-import skapar fortsatt endast volontärer.
+
+Öppet hus är ett eget bokningsbart pass 11–15 första söndagen varje månad i det befintliga sexveckorsschemat. Volontärer bokar sig själva och admin kan boka åt andra. Ordinarie pass 16–18 är fortsatt inställt den dagen. Öppet hus fylls automatiskt på tolv månader framåt och kan inte skapas, flyttas eller tas bort manuellt. Överlappande personliga bokningar är fortsatt blockerade.
+
+Alla pass har ett rekommenderat tak på sju personer. Den åttonde och senare bokningen kräver en uttrycklig extra bekräftelse, även via API och när admin bokar åt någon annan.
+
+Admin ser aktiva volontärer som inte har ett genomfört pass under senaste kalendermånaden. Nya konton utan historik varnas först en månad efter registrering. För befintliga konton utan historik börjar denna period vid uppgraderingen. Beräkningen använder avslutade bokningar, inte faktisk närvaroregistrering.
+
+På sidan visas egna bokade pass inom nästa dygn som påminnelser. E-postpåminnelser skickas via Resend när RESEND_API_KEY, EMAIL_FROM (verifierad avsändare) och APP_URL är konfigurerade. Compose vidarebefordrar dessa variabler; vid lokal start anges de i processens miljö. Avsändaradressen och API-nyckeln ska inte checkas in. Inställningar och eventuella sändningsfel visas under Administration → Påminnelser.
+
+Appen kontrollerar varje minut och vid start efter bokningar inom 24 timmar. En påminnelse skickas per bokning; sena bokningar påminns vid nästa kontroll. Avbokade, inställda och redan påbörjade pass samt inaktiva konton undantas. Leveranshistorik sparas i SQLite och en idempotensnyckel skyddar återförsök. Appen måste vara igång för att skicka. Admin kan även köra kontrollen direkt med Skicka påminnelser för nästa dygn. Inga riktiga e-postutskick gjordes under testerna.
+
+Tekniska referenser: [Resend Send Email](https://resend.com/docs/api-reference/emails/send-email) och [idempotensnycklar](https://resend.com/docs/dashboard/emails/idempotency-keys).
+
+## Extra händelser, till exempel veterinärbesök
+
+Admin skapar en händelse under Administration → Skapa händelse med namn, datum, start, slut och information. Händelsen visas i veckoschemat och i listan Händelser under Administration. Volontärer kan boka sig och admin kan boka åt andra. Skapa admin och Gör till admin finns kvar.
+
+Ändra / boka om bevarar deltagarnas bokningar. En flytt stoppas om någon deltagare har en överlappande bokning. Vid tidsändring nollställs tidigare e-postpåminnelser för deltagarna, så nästa kontroll kan påminna om den nya tiden. Informera deltagarna separat om ändringen.
+
+Ställ in händelse spärrar nya bokningar och påminnelser men behåller bokningshistoriken; den räknas inte som genomförd. En inställd händelse kan aktiveras igen med Boka om. Avslutade händelser kan inte ändras. Öppet hus ligger fast första söndagen i månaden kl. 11–15.

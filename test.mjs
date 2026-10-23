@@ -1,4 +1,7 @@
 import {test} from 'node:test';
+import {monthAgo,isInactive} from './activity.mjs';
+import {createReminders} from './reminders.mjs';
+import vm from 'node:vm';
 import {parseVolunteersCsv} from './csv-import.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import assert from 'node:assert/strict';
@@ -8,7 +11,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 const dir=mkdtempSync(path.join(tmpdir(),'katthem-test-'));
 let child,base;
-async function start(env={}){child=spawn(process.execPath,['server.mjs'],{cwd:import.meta.dirname,env:{...process.env,NODE_ENV:'test',HOST:'127.0.0.1',APP_URL:'',...env,DATA_DIR:dir,PORT:'0'},stdio:['ignore','pipe','pipe']});base=await new Promise((resolve,reject)=>{child.stdout.on('data',b=>{const m=b.toString().match(/http:\/\/[^\s:]+:\d+/);if(m)resolve(m[0].replace('0.0.0.0','127.0.0.1'))});child.on('error',reject);child.on('exit',code=>reject(Error('Server exit '+code)))});}
+async function start(env={}){child=spawn(process.execPath,['server.mjs'],{cwd:import.meta.dirname,env:{...process.env,NODE_ENV:'test',HOST:'127.0.0.1',APP_URL:'',RESEND_API_KEY:'',EMAIL_FROM:'',...env,DATA_DIR:dir,PORT:'0'},stdio:['ignore','pipe','pipe']});base=await new Promise((resolve,reject)=>{child.stdout.on('data',b=>{const m=b.toString().match(/http:\/\/[^\s:]+:\d+/);if(m)resolve(m[0].replace('0.0.0.0','127.0.0.1'))});child.on('error',reject);child.on('exit',code=>reject(Error('Server exit '+code)))});}
 async function stop(){if(!child||child.exitCode!==null)return;await new Promise(r=>{child.once('exit',r);child.kill()})}
 async function call(route,method='GET',data,cookie){return fetch(base+'/api/'+route,{method,headers:{...(cookie?{cookie}:{}),...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined})}
 test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',async()=>{
@@ -23,6 +26,13 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const day=new Date();day.setDate(day.getDate()+10);const date=day.toISOString().slice(0,10);
  let r=await call('slots','POST',{date,start:'12:00',end:'13:00',title:'Testpass',capacity:1},ac);assert.equal(r.status,200);const slot=(await r.json()).slots.find(s=>s.title==='Testpass');
  r=await call('users','POST',{name:'Testvolontär',email:'test@example.se',password:'password12345'},ac);assert.equal(r.status,200);const uid=(await r.json()).users.find(u=>u.email==='test@example.se').id;
+ assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
+ const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');
+ assert.equal((await call('users/'+uid,'PATCH',{role:'admin'},vc)).status,403);
+ let roleChange=await call('users/'+uid,'PATCH',{role:'admin'},ac);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'admin');
+ roleChange=await call('users/'+uid,'PATCH',{role:'volunteer'},newAdminCookie);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'volunteer');
+ const adminState=await(await call('state','GET',null,ac)).json();assert.equal((await call('users/'+adminState.user.id,'PATCH',{role:'volunteer'},ac)).status,400);
+ assert.equal((await call('reminders/send','POST',{},vc)).status,403);assert.equal((await call('reminders/send','POST',{},ac)).status,503);
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
@@ -52,7 +62,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const addHistory=(date,cancelled=0)=>{const row=insertSlot.run(date,'08:00','12:00','Historiktest','',cancelled);insertBooking.run(uid,row.lastInsertRowid)};
  for(let i=1;i<=15;i++)addHistory('2000-01-'+String(i).padStart(2,'0'));
  addHistory('2000-01-20',1);addHistory('2099-01-20');
- let stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,15);assert.equal(stats.users.find(u=>u.id===uid).green,false);
+ let stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,15);assert.equal(stats.users.find(u=>u.id===uid).green,false);assert.equal(stats.users.find(u=>u.id===uid).inactive_month,true);
  assert.equal(stats.users.find(u=>u.id===stats.user.id).completed_shifts,0);
  addHistory('2000-01-16');
  stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,16);assert.equal(stats.users.find(u=>u.id===uid).green,true);
@@ -65,6 +75,38 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('bookings','POST',{slotId:slot.id},ac)).status,200);
  s=await(await call('state','GET',null,ac)).json();assert.equal(s.slots.find(x=>x.id===slot.id).booked,3);
  assert.equal((await call('bookings/'+s.bookings.find(b=>b.slot_id===slot.id&&b.user_id===s.user.id).id,'DELETE',null,ac)).status,200);
+ // Seven is advisory: seventh succeeds, eighth requires explicit confirmation on the server.
+ const crowd=await call('slots','POST',{date:'2099-03-10',start:'12:00',end:'13:00',title:'Sjutest'},ac);assert.equal(crowd.status,200);const crowdId=(await crowd.json()).slots.find(s=>s.title==='Sjutest').id;
+ const seedDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));const crowdUsers=[];
+ try{const userPassword=seedDb.prepare('SELECT password FROM users WHERE id=?').get(uid).password;for(let i=0;i<7;i++){const row=seedDb.prepare('INSERT INTO users(name,email,password,created_at) VALUES(?,?,?,?)').run('Bemanning '+i,'crowd'+i+'@example.se',userPassword,Date.now());crowdUsers.push(Number(row.lastInsertRowid))}}finally{seedDb.close()}
+ for(const userId of crowdUsers)assert.equal((await call('bookings','POST',{slotId:crowdId,userId},ac)).status,200);
+ const warning=await call('bookings','POST',{slotId:crowdId},vc);assert.equal(warning.status,409);assert.equal((await warning.json()).code,'RECOMMENDED_LIMIT');
+ assert.equal((await call('bookings','POST',{slotId:crowdId,confirmOverLimit:false},vc)).status,409);
+ assert.equal((await call('bookings','POST',{slotId:crowdId,confirmOverLimit:true},vc)).status,200);
+ assert.equal((await call('bookings','POST',{slotId:crowdId,userId:uid},ac)).status,409);
+ assert.equal((await call('bookings','POST',{slotId:crowdId,userId:uid,confirmOverLimit:true},ac)).status,200);
+ const existingOpenHouse=(await(await call('state','GET',null,ac)).json()).slots.filter(s=>s.kind==='open_house');assert.ok(existingOpenHouse.length>0);for(const event of existingOpenHouse){assert.equal(event.start,'11:00');assert.equal(event.end,'15:00');assert.equal(new Date(event.date+'T12:00').getDay(),0);assert.ok(Number(event.date.slice(-2))<=7)}
+ assert.equal((await call('slots','POST',{date:'2099-02-01',start:'11:00',end:'15:00',title:'Öppet hus',kind:'open_house'},ac)).status,400);
+ const openId=existingOpenHouse.find(s=>new Date(s.date+'T'+s.start)>new Date()).id;
+ assert.equal((await call('bookings','POST',{slotId:openId},vc)).status,200);assert.equal((await call('bookings','POST',{slotId:openId,userId:uid},ac)).status,200);
+ assert.equal((await call('slots/'+openId,'DELETE',null,ac)).status,400);assert.equal((await call('slots/'+openId,'PATCH',{date:'2099-02-01',start:'10:00',end:'12:00',title:'Flyttat'},ac)).status,400);
+ // Events can be rescheduled atomically, retaining attendees and checking their other bookings.
+ const eventPayload={date:'2099-04-10',start:'13:00',end:'14:00',title:'Veterinärbesök',kind:'event',note:'Vaccination'};
+ assert.equal((await call('slots','POST',eventPayload,vc)).status,403);
+ const eventResponse=await call('slots','POST',eventPayload,ac);assert.equal(eventResponse.status,200);const eventId=(await eventResponse.json()).slots.find(s=>s.title==='Veterinärbesök').id;
+ assert.equal((await call('bookings','POST',{slotId:eventId},vc)).status,200);assert.equal((await call('bookings','POST',{slotId:eventId,userId:uid},ac)).status,200);
+ const beforeEvent=await(await call('state','GET',null,ac)).json(),eventBookings=beforeEvent.bookings.filter(b=>b.slot_id===eventId).map(b=>b.id);
+ const otherResponse=await call('slots','POST',{...eventPayload,date:'2099-04-11',title:'Annat besök'},ac);const otherId=(await otherResponse.json()).slots.find(s=>s.title==='Annat besök').id;assert.equal((await call('bookings','POST',{slotId:otherId},vc)).status,200);
+ assert.equal((await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-04-11'},ac)).status,409);
+ let eventState=await(await call('state','GET',null,ac)).json();assert.equal(eventState.slots.find(s=>s.id===eventId).date,'2099-04-10');
+ assert.equal((await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-04-12'},vc)).status,403);
+ const deliveryDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));deliveryDb.prepare('INSERT INTO reminder_delivery(booking_id,delivery_key,sent_at) VALUES(?,?,?)').run(eventBookings[0],'event-test-key',Date.now());deliveryDb.close();
+ const moved=await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-04-12'},ac);assert.equal(moved.status,200);eventState=await moved.json();assert.deepEqual(eventState.bookings.filter(b=>b.slot_id===eventId).map(b=>b.id),eventBookings);
+ const checkDelivery=new DatabaseSync(path.join(dir,'katthem.sqlite'));assert.equal(checkDelivery.prepare('SELECT COUNT(*) n FROM reminder_delivery WHERE booking_id=?').get(eventBookings[0]).n,0);checkDelivery.close();
+ const cancelledEvent=await call('slots/'+eventId,'PATCH',{cancelled:true},ac);assert.equal(cancelledEvent.status,200);eventState=await cancelledEvent.json();assert.equal(eventState.slots.find(s=>s.id===eventId).cancelled,1);assert.deepEqual(eventState.bookings.filter(b=>b.slot_id===eventId).map(b=>b.id),eventBookings);
+ assert.equal((await call('bookings','POST',{slotId:eventId},ac)).status,409);
+ const restored=await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-04-12'},ac);assert.equal(restored.status,200);assert.equal((await restored.json()).slots.find(s=>s.id===eventId).cancelled,0);
+ assert.equal((await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-02-30'},ac)).status,400);assert.equal((await call('slots/'+eventId,'DELETE',null,ac)).status,400);
  const firstSunday='2099-02-01',laterSunday='2099-02-08';
  // February 1, 2099 is a Sunday: open house blocks afternoon bookings.
  assert.equal(new Date(firstSunday+'T12:00').getDay(),0);
@@ -107,4 +149,39 @@ test('CSV: BOM, citattecken, radbrytningar och validering',()=>{
  assert.equal(parsed[0].name,'Anna, "Katt"\nVän');assert.equal(parsed[0].green,true);
  for(const csv of ['namn;e-post;lösenord\n"Oavslutad;a@example.se;Password12345','namn;e-post;lösenord;grön\nNamn;a@example.se;Password12345;kanske','namn;e-post;lösenord\nNamn;a@example.se','namn;e-post;lösenord'])assert.throws(()=>parseVolunteersCsv(csv));
  assert.throws(()=>parseVolunteersCsv('namn;e-post;lösenord\n'+Array.from({length:501},(_,i)=>'Namn;a'+i+'@example.se;Password12345').join('\n')),/500/);
+});
+
+test('En kalendermånads frånvaro: gräns, nya konton och månadsslut',()=>{
+ const now=new Date(2030,2,31,12),cutoff=new Date(2030,1,28,12).getTime();assert.equal(monthAgo(now),cutoff);
+ const user={role:'volunteer',active:1,created_at:cutoff-1};assert.equal(isInactive(user,cutoff,now),true);assert.equal(isInactive(user,cutoff+1,now),false);assert.equal(isInactive({...user,created_at:now.getTime()},undefined,now),false);assert.equal(isInactive(user,undefined,now),true);assert.equal(isInactive({...user,active:0},cutoff-1,now),false);assert.equal(isInactive({...user,role:'admin'},cutoff-1,now),false);
+});
+test('E-postpåminnelser: filtrering, försök igen och skydd mot dubbla utskick',async()=>{
+ const db=new DatabaseSync(':memory:');db.exec("PRAGMA foreign_keys=ON;CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,email TEXT,active INTEGER);CREATE TABLE slots(id INTEGER PRIMARY KEY,date TEXT,start TEXT,end TEXT,title TEXT,cancelled INTEGER);CREATE TABLE bookings(id INTEGER PRIMARY KEY,user_id INTEGER REFERENCES users(id),slot_id INTEGER REFERENCES slots(id));INSERT INTO users VALUES(1,'Anna','anna@example.se',1),(2,'Inaktiv','inactive@example.se',0);");
+ const now=new Date(2030,4,11,12).getTime(),requests=[];
+ const add=(id,date,start,cancelled=0,userId=1)=>{db.prepare('INSERT INTO slots VALUES(?,?,?,?,?,?)').run(id,date,start,'19:00','Testpass',cancelled);db.prepare('INSERT INTO bookings VALUES(?,?,?)').run(id,userId,id)};
+ add(1,'2030-05-11','13:00');add(2,'2030-05-11','14:00');add(3,'2030-05-11','15:00',1);add(4,'2030-05-11','11:00');add(5,'2030-05-12','13:00');add(6,'2030-05-11','16:00',0,2);
+ let fail=true;const config={apiKey:'test-key',from:'katthem@example.se',appUrl:'https://katthem.example.se',now:()=>now,fetchImpl:async(url,options)=>{requests.push({url,...options});if(fail){fail=false;return {ok:false,status:429}}return {ok:true}}};
+ try{
+  const reminders=createReminders(db,config);assert.deepEqual(await reminders.run(),{sent:1,failed:1});assert.match(reminders.status().last_error,/429/);
+  assert.deepEqual(await reminders.run(),{sent:1,failed:0});assert.equal(requests.length,3);assert.equal(requests[0].headers['Idempotency-Key'],requests[2].headers['Idempotency-Key']);assert.equal(requests[0].headers.Authorization,'Bearer test-key');assert.deepEqual(JSON.parse(requests[0].body).to,['anna@example.se']);assert.match(JSON.parse(requests[0].body).text,/13:00/);
+  const restarted=createReminders(db,config);assert.deepEqual(await restarted.run(),{sent:0,failed:0});assert.equal(restarted.status().sent_count,2);
+  const disabled=createReminders(db,{});assert.equal(disabled.status().configured,false);assert.deepEqual(await disabled.run(),{sent:0,failed:0});
+ }finally{db.close()}
+});
+
+test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde bokning',async()=>{
+ const elements=new Map(),requests=[];
+ const element=()=>({innerHTML:'',style:{},querySelectorAll:()=>[],querySelector:()=>({}),showModal(){this.open=true},close(){this.open=false}});
+ const document={querySelector(s){if(s==='#password-form')return null;if(!elements.has(s))elements.set(s,element());return elements.get(s)}};
+ const future=new Date(Date.now()+7200000),date=[future.getFullYear(),String(future.getMonth()+1).padStart(2,'0'),String(future.getDate()).padStart(2,'0')].join('-'),start=String(future.getHours()).padStart(2,'0')+':'+String(future.getMinutes()).padStart(2,'0');
+ const fixture={user:{id:1,name:'Admin',email:'admin@example.se',role:'admin',completed_shifts:0},users:[{id:2,name:'Volontär',email:'volunteer@example.se',role:'volunteer',active:1,completed_shifts:0,inactive_month:true}],slots:[{id:5,date,start,end:'23:59',title:'Öppet hus',kind:'open_house',mine:1,booked:7,minimum_staff:2,cancelled:0}],bookings:[],email_reminders:{configured:false}};
+ const context=vm.createContext({document,Date,setTimeout,FormData:class{},fixture,fetch:async(url,options)=>{if(url==='/api/state')return new Promise(()=>{});requests.push(JSON.parse(options.body));return requests.length===1?{ok:false,status:409,json:async()=>({error:'Redan 7',code:'RECOMMENDED_LIMIT'})}:{ok:true,json:async()=>fixture}}});
+ vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);
+ vm.runInContext("state=fixture;view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Volontärer att följa upp/);assert.match(elements.get('#app').innerHTML,/Gör till admin/);assert.match(elements.get('#app').innerHTML,/dina pass inom nästa dygn/);
+ vm.runInContext('newUser()',context);assert.match(elements.get('#modal').innerHTML,/option value="admin"/);
+ assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa öppet hus/);assert.match(elements.get('#app').innerHTML,/Skapa händelse/);assert.match(elements.get('#app').innerHTML,/Skapa admin/);
+ vm.runInContext("eventForm()",context);assert.match(elements.get('#modal').innerHTML,/Veterinärbesök/);assert.match(elements.get('#modal').innerHTML,/value="event"/);
+ vm.runInContext("newUser('admin')",context);assert.match(elements.get('#modal').innerHTML,/value="admin" selected/);
+ await vm.runInContext('bookSlot(5)',context);assert.match(elements.get('#modal').innerHTML,/Är du säker/);assert.equal(requests[0].confirmOverLimit,false);
+ await elements.get('#confirm-over-limit').onclick();assert.equal(requests[1].confirmOverLimit,true);assert.equal(elements.get('#modal').open,false);
 });
