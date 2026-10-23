@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
 import { createEmailSettings } from './email-settings.mjs';
 import { isInactive } from './activity.mjs';
 import { createReminders } from './reminders.mjs';
@@ -63,6 +64,8 @@ if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
 db.prepare('UPDATE users SET created_at=? WHERE created_at=0').run(Date.now());
 // Add open house once for each first Sunday already present in the schedule.
 db.exec('CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY)');
+if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('default-shifts-08-12-16-18-18-20-v1')&&db.prepare("SELECT id FROM slots WHERE (start='08:00' AND end='10:00') OR (start='17:00' AND end='19:00') LIMIT 1").get()&&!existsSync(path.join(dataDir,'before-shift-times-upgrade.sqlite')))db.prepare('VACUUM INTO ?').run(path.join(dataDir,'before-shift-times-upgrade.sqlite'));
+upgradeDefaultShifts(db,sundayRules);
 if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('open-house-11-15')){
  db.exec('BEGIN IMMEDIATE');try{
  const add=db.prepare("INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind) SELECT ?,'11:00','15:00','Öppet hus',0,'Hjälp till under öppet hus. Volontärer kan anmäla sig själva.',0,'open_house' WHERE NOT EXISTS(SELECT 1 FROM slots WHERE date=? AND kind='open_house')");
@@ -147,6 +150,15 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/export'&&req.method==='GET'){
  const rows=db.prepare('SELECT s.date,s.start,s.end,s.title,u.name,u.email FROM slots s LEFT JOIN bookings b ON b.slot_id=s.id LEFT JOIN users u ON u.id=b.user_id ORDER BY s.date,s.start').all();
  const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="katthem-schema.csv"','Cache-Control':'no-store'});return res.end('\uFEFF'+[['Datum','Start','Slut','Pass','Namn','E-post'],...rows.map(Object.values)].map(r=>r.map(cell).join(';')).join('\r\n'));}
+ if(/^\/api\/users\/\d+\/password$/.test(url.pathname)&&req.method==='POST'){
+  const id=Number(url.pathname.split('/')[3]),p=await body(req);
+  if(id===user.id)fail('Byt ditt eget lösenord under Mitt konto.');
+  if(!db.prepare('SELECT id FROM users WHERE id=?').get(id))fail('Kontot finns inte.',404);
+  if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');
+  const passwordHash=hash(p.password);
+  db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE users SET password=? WHERE id=?').run(passwordHash,id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
+  return send(snapshot(user));
+ }
  if(url.pathname==='/api/users'&&req.method==='POST'){const p=await body(req);if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Ange namn, giltig e-post och lösenord med 10–200 tecken.');if(db.prepare('SELECT id FROM users WHERE email=?').get(p.email.trim().toLowerCase()))fail('E-postadressen finns redan.');if(p.role!==undefined&&!['admin','volunteer'].includes(p.role))fail('Ogiltig roll.');db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),hash(p.password),p.role||'volunteer',Date.now());return send(snapshot(user));}
 
  if(['/api/users/import-preview','/api/users/import'].includes(url.pathname)&&req.method==='POST'){

@@ -94,3 +94,13 @@ Under Administration → Påminnelser → E-postinställningar kan admin spara G
 Gmail använder TLS till smtp.gmail.com på port 465. Applösenordet krypteras med AES-256-GCM i data/email-settings.json; nyckeln ligger i data/email-secret.key. Båda filerna måste ingå i en skyddad säkerhetskopia av datamappen. Krypteringen skyddar inte mot någon som har tillgång till både nyckel och inställningsfil. Inget applösenord skickas tillbaka till webbläsaren. Tomt lösenordsfält behåller sparat lösenord; byte av Gmail-adress kräver ett nytt.
 
 Sparade Gmail-inställningar ersätter Resend-konfigurationen. Avmarkera aktivering och spara för att pausa e-postutskicken. Databasens leveranshistorik förhindrar normala dubbletter; Gmail saknar Resends idempotensgaranti, så en oklar nätverkskvittens kan leda till en dubblett vid återförsök.
+
+## Version 0.2.001
+
+Versionsnumret visas längst ner på sidan. Paketversionen använder standardformatet 0.2.1, som visas som 0.2.001.
+
+Admin kan sätta ett nytt lösenord för ett annat konto via Administration → Volontärer & administratörer → Byt lösenord. Lösenordet kräver 10–200 tecken och bekräftelse i formuläret. Kontots samtliga sessioner avslutas när det sparas. Ingen e-post skickas; lämna det nya lösenordet direkt till personen. Eget lösenord ändras under Mitt konto.
+
+## Version 0.2.002 – uppgradering av befintligt schema
+
+De ursprungliga automatiska passen 08–10 och 17–19 uppdateras en gång vid start till 08–12 och 18–20. Eftermiddagspass 16–18 läggs till på dessa datum om de saknas. Söndagsreglerna tillämpas och boknings-ID samt konton bevaras. Endast pass med de ursprungliga namnen, tiderna och standardtexterna matchas; anpassade pass och händelser lämnas kvar. En databaskopia före tiduppgraderingen sparas i datamappen. Lokala och publicerade databaser är separata och synkas inte via GitHub. Driftsätt den nya koden för att uppgradera serverns befintliga schema. Hänvisningar till lokala startkonton och märkningen Lokal version visas inte längre i gränssnittet.

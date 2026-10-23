@@ -8,3 +8,5 @@
 .panel.experienced-volunteer{background:#e2efdf;border-left:4px solid #397144}.check-label{display:flex;align-items:center;gap:8px}.check-label input{width:auto;margin:0}.import-preview{max-height:320px;overflow:auto}dialog pre{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .reminder-notice{background:#e7efe2;border-left:4px solid #397144;margin-bottom:24px}.reminder-notice p{margin:8px 0}.reminder-notice button{font-size:12px;padding:5px 10px}
+
+.version-footer{margin:0;padding:12px 20px;text-align:center;font-size:12px;color:var(--muted)}

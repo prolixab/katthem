@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {upgradeDefaultShifts} from './schedule-upgrade.mjs';
 import {createEmailSettings} from './email-settings.mjs';
 import {monthAgo,isInactive} from './activity.mjs';
 import {createReminders} from './reminders.mjs';
@@ -41,6 +42,19 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const savedConfig=await(await call('email-settings','GET',null,ac)).json();assert.equal(savedConfig.gmail_address,'test@gmail.com');assert.equal(savedConfig.enabled,false);
  assert.equal((await call('email-settings/test','POST',{to:'invalid'},ac)).status,400);
  assert.equal((await call('email-settings','PUT',{gmail_address:'changed@gmail.com',app_password:'',app_url:'https://katthem.example.se',enabled:false},ac)).status,400);
+ const resetCreate=await call('users','POST',{name:'Lösenordstest',email:'reset@example.se',password:'Original12345'},ac);assert.equal(resetCreate.status,200);const resetId=(await resetCreate.json()).users.find(u=>u.email==='reset@example.se').id;
+ const loginReset=async password=>call('login','POST',{email:'reset@example.se',password});
+ const resetLogin1=await loginReset('Original12345'),resetLogin2=await loginReset('Original12345');const resetCookie1=resetLogin1.headers.get('set-cookie').split(';')[0],resetCookie2=resetLogin2.headers.get('set-cookie').split(';')[0];
+ assert.equal((await call('users/'+resetId+'/password','POST',{password:'Changed12345'})).status,401);
+ assert.equal((await call('users/'+resetId+'/password','POST',{password:'Changed12345'},vc)).status,403);
+ assert.equal((await call('users/'+resetId+'/password','POST',{password:'short'},ac)).status,400);
+ assert.equal((await call('state','GET',null,resetCookie1)).status,200);
+ assert.equal((await call('users/999999/password','POST',{password:'Changed12345'},ac)).status,404);
+ assert.equal((await call('users/'+adminState.user.id+'/password','POST',{password:'Changed12345'},ac)).status,400);
+ const resetDone=await call('users/'+resetId+'/password','POST',{password:'Changed12345'},ac);assert.equal(resetDone.status,200);const resetState=await resetDone.json();assert.equal(resetState.users.find(u=>u.id===resetId).active,1);assert.ok(!JSON.stringify(resetState).includes('Changed12345'));
+ assert.equal((await call('state','GET',null,resetCookie1)).status,401);assert.equal((await call('state','GET',null,resetCookie2)).status,401);
+ assert.equal((await loginReset('Original12345')).status,401);assert.equal((await loginReset('Changed12345')).status,200);
+ assert.equal((await call('state','GET',null,ac)).status,200);
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
@@ -190,6 +204,7 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa öppet hus/);assert.match(elements.get('#app').innerHTML,/Skapa händelse/);assert.match(elements.get('#app').innerHTML,/Skapa admin/);
  vm.runInContext("eventForm()",context);assert.match(elements.get('#modal').innerHTML,/Veterinärbesök/);assert.match(elements.get('#modal').innerHTML,/value="event"/);
  vm.runInContext("newUser('admin')",context);assert.match(elements.get('#modal').innerHTML,/value="admin" selected/);
+ vm.runInContext('resetUserPassword(2)',context);assert.match(elements.get('#modal').innerHTML,/Byt lösenord för Volontär/);assert.match(elements.get('#modal').innerHTML,/name="confirm"/);assert.match(elements.get('#modal').innerHTML,/Alla inloggningar/);
  await vm.runInContext('bookSlot(5)',context);assert.match(elements.get('#modal').innerHTML,/Är du säker/);assert.equal(requests[0].confirmOverLimit,false);
  await elements.get('#confirm-over-limit').onclick();assert.equal(requests[1].confirmOverLimit,true);assert.equal(elements.get('#modal').open,false);
 });
@@ -222,4 +237,23 @@ test('Gmail-formulär: sparat lösenord visas inte och testknapp kräver sparade
  vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);vm.runInContext("state={user:{email:'admin@example.se'}}",context);
  await vm.runInContext('emailSettingsDialog()',context);assert.match(elements.get('#modal').innerHTML,/Gmail-applösenord/);assert.match(elements.get('#modal').innerHTML,/<button disabled>Skicka testmejl/);
  settings.password_saved=true;await vm.runInContext('emailSettingsDialog()',context);assert.match(elements.get('#modal').innerHTML,/Ett applösenord finns sparat/);assert.doesNotMatch(elements.get('#modal').innerHTML,/<button disabled>Skicka testmejl/);assert.doesNotMatch(elements.get('#modal').innerHTML,/name="app_password"[^>]*value=/);
+});
+
+test('Uppgradera ursprungligt schema: behåll bokningar och anpassade pass, inga dubbletter',()=>{
+ const db=new DatabaseSync(':memory:');
+ db.exec("PRAGMA foreign_keys=ON;CREATE TABLE slots(id INTEGER PRIMARY KEY,date TEXT,start TEXT,end TEXT,title TEXT,capacity INTEGER,note TEXT,cancelled INTEGER,kind TEXT);CREATE TABLE bookings(id INTEGER PRIMARY KEY,user_id INTEGER,slot_id INTEGER REFERENCES slots(id));CREATE TABLE migrations(name TEXT PRIMARY KEY);");
+ const insert=db.prepare('INSERT INTO slots VALUES(?,?,?,?,?,2,?,?,?)');
+ insert.run(1,'2099-02-08','08:00','10:00','Morgonpass','Mat, rent vatten och en lugn start för katterna.',0,'regular');
+ insert.run(2,'2099-02-08','17:00','19:00','Kvällspass','Mat, städning och en stunds sällskap.',0,'regular');
+ insert.run(3,'2099-02-01','17:00','19:00','Inställt – öppet hus','Öppet hus första söndagen i månaden. Passet 16–18 är inställt.',1,'regular');
+ insert.run(4,'2099-02-08','08:00','10:00','Morgonpass','Egen information',0,'regular');
+ insert.run(5,'2099-02-08','17:00','19:00','Veterinärbesök','Mat, städning och en stunds sällskap.',0,'event');
+ insert.run(6,'2099-02-08','16:00','18:00','Extra eftermiddag','Egen information',0,'regular');
+ db.prepare('INSERT INTO bookings VALUES(1,42,2)').run();
+ const rules=(date,start,end,title,note)=>start==='18:00'?{title:'Socialiseringsgruppen',note:'Socialiseringsträning',cancelled:0}:date==='2099-02-01'&&start==='16:00'?{title:'Inställt – öppet hus',note:'Öppet hus',cancelled:1}:{title,note,cancelled:0};
+ try{
+  assert.equal(upgradeDefaultShifts(db,rules),true);assert.equal(db.prepare('SELECT end FROM slots WHERE id=1').get().end,'12:00');assert.equal(db.prepare('SELECT start FROM slots WHERE id=2').get().start,'18:00');assert.equal(db.prepare('SELECT title FROM slots WHERE id=3').get().title,'Socialiseringsgruppen');assert.equal(db.prepare('SELECT cancelled FROM slots WHERE id=3').get().cancelled,0);
+  assert.equal(db.prepare('SELECT slot_id FROM bookings WHERE id=1').get().slot_id,2);assert.equal(db.prepare('SELECT end FROM slots WHERE id=4').get().end,'10:00');assert.equal(db.prepare('SELECT start FROM slots WHERE id=5').get().start,'17:00');assert.equal(db.prepare("SELECT COUNT(*) n FROM slots WHERE date='2099-02-08' AND start='16:00'").get().n,1);assert.equal(db.prepare("SELECT cancelled FROM slots WHERE date='2099-02-01' AND start='16:00'").get().cancelled,1);
+  const count=db.prepare('SELECT COUNT(*) n FROM slots').get().n;assert.equal(upgradeDefaultShifts(db,rules),false);assert.equal(db.prepare('SELECT COUNT(*) n FROM slots').get().n,count);
+ }finally{db.close()}
 });
