@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { createEmailSettings } from './email-settings.mjs';
 import { isInactive } from './activity.mjs';
 import { createReminders } from './reminders.mjs';
 import { parseVolunteersCsv } from './csv-import.mjs';
@@ -74,7 +75,8 @@ function ensureOpenHouse(){
  for(let month=0;month<12;month++){const d=new Date(now.getFullYear(),now.getMonth()+month,1,12);d.setDate(1+(7-d.getDay())%7);const date=localDate(d);insert.run(date,date)}
 }
 ensureOpenHouse();
-const reminders=createReminders(db,{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin});
+const emailSettings=createEmailSettings({dataDir,defaultUrl:appOrigin||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
+const reminders=createReminders(db,{mailProvider:emailSettings});
 const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
 const sessions=db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token=? AND expires>? AND active=1');
 function completedCounts(userId){
@@ -138,7 +140,10 @@ const server=http.createServer(async(req,res)=>{
  if(user.role!=='admin'){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta administratören.');}
  db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);return send(snapshot(user));}
  if(user.role!=='admin')fail('Du saknar administratörsbehörighet.',403);
- if(url.pathname==='/api/reminders/send'&&req.method==='POST'){if(!reminders.status().configured)fail('E-post är inte konfigurerad. Ange RESEND_API_KEY, EMAIL_FROM och APP_URL.',503);const result=await reminders.run();return send({...snapshot(user),reminder_result:result})}
+ if(url.pathname==='/api/email-settings'&&req.method==='GET')return send(emailSettings.settings());
+ if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);return send(emailSettings.save(p))}
+ if(url.pathname==='/api/email-settings/test'&&req.method==='POST'){const p=await body(req);return send(await emailSettings.test(p.to))}
+ if(url.pathname==='/api/reminders/send'&&req.method==='POST'){if(!reminders.status().configured)fail('E-post är inte konfigurerad. Öppna E-postinställningar i Administration.',503);const result=await reminders.run();return send({...snapshot(user),reminder_result:result})}
  if(url.pathname==='/api/export'&&req.method==='GET'){
  const rows=db.prepare('SELECT s.date,s.start,s.end,s.title,u.name,u.email FROM slots s LEFT JOIN bookings b ON b.slot_id=s.id LEFT JOIN users u ON u.id=b.user_id ORDER BY s.date,s.start').all();
  const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="katthem-schema.csv"','Cache-Control':'no-store'});return res.end('\uFEFF'+[['Datum','Start','Slut','Pass','Namn','E-post'],...rows.map(Object.values)].map(r=>r.map(cell).join(';')).join('\r\n'));}

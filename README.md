@@ -1,6 +1,6 @@
 # Katthemmet
 
-Kräver Node.js 24 eller senare. Inga paket behöver installeras.
+Kräver Node.js 24 eller senare. Kör `npm ci` före första lokala starten för att installera det versionslåsta e-postbiblioteket. Docker installerar det vid bygget.
 
 ## Starta
 
@@ -86,3 +86,11 @@ Admin skapar en händelse under Administration → Skapa händelse med namn, dat
 Ändra / boka om bevarar deltagarnas bokningar. En flytt stoppas om någon deltagare har en överlappande bokning. Vid tidsändring nollställs tidigare e-postpåminnelser för deltagarna, så nästa kontroll kan påminna om den nya tiden. Informera deltagarna separat om ändringen.
 
 Ställ in händelse spärrar nya bokningar och påminnelser men behåller bokningshistoriken; den räknas inte som genomförd. En inställd händelse kan aktiveras igen med Boka om. Avslutade händelser kan inte ändras. Öppet hus ligger fast första söndagen i månaden kl. 11–15.
+
+## Gmail på sidan
+
+Under Administration → Påminnelser → E-postinställningar kan admin spara Gmail-adress, ett Google-applösenord och sidans publika webbadress. Aktivera tvåstegsverifiering och skapa ett applösenord enligt [Googles instruktioner](https://support.google.com/mail/answer/185833?hl=sv). Spara, skicka ett testmejl och aktivera automatiska Gmail-påminnelser. Inställningarna börjar gälla utan omstart. Testmejl skickas bara efter att admin klickar Skicka testmejl.
+
+Gmail använder TLS till smtp.gmail.com på port 465. Applösenordet krypteras med AES-256-GCM i data/email-settings.json; nyckeln ligger i data/email-secret.key. Båda filerna måste ingå i en skyddad säkerhetskopia av datamappen. Krypteringen skyddar inte mot någon som har tillgång till både nyckel och inställningsfil. Inget applösenord skickas tillbaka till webbläsaren. Tomt lösenordsfält behåller sparat lösenord; byte av Gmail-adress kräver ett nytt.
+
+Sparade Gmail-inställningar ersätter Resend-konfigurationen. Avmarkera aktivering och spara för att pausa e-postutskicken. Databasens leveranshistorik förhindrar normala dubbletter; Gmail saknar Resends idempotensgaranti, så en oklar nätverkskvittens kan leda till en dubblett vid återförsök.

@@ -4,3 +4,9 @@
 !server.mjs
 !public/
 !public/**
+
+!package-lock.json
+!csv-import.mjs
+!activity.mjs
+!reminders.mjs
+!email-settings.mjs

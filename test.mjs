@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {createEmailSettings} from './email-settings.mjs';
 import {monthAgo,isInactive} from './activity.mjs';
 import {createReminders} from './reminders.mjs';
 import vm from 'node:vm';
@@ -33,6 +34,13 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  roleChange=await call('users/'+uid,'PATCH',{role:'volunteer'},newAdminCookie);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'volunteer');
  const adminState=await(await call('state','GET',null,ac)).json();assert.equal((await call('users/'+adminState.user.id,'PATCH',{role:'volunteer'},ac)).status,400);
  assert.equal((await call('reminders/send','POST',{},vc)).status,403);assert.equal((await call('reminders/send','POST',{},ac)).status,503);
+ assert.equal((await call('email-settings','GET',null,vc)).status,403);
+ assert.equal((await call('email-settings','PUT',{gmail_address:'test@gmail.com',app_password:'abcdefghijklmnop',app_url:'https://katthem.example.se',enabled:false},vc)).status,403);
+ assert.equal((await call('email-settings/test','POST',{to:'test@example.se'},vc)).status,403);
+ const mailConfig=await call('email-settings','PUT',{gmail_address:'test@gmail.com',app_password:'abcd efgh ijkl mnop',app_url:'https://katthem.example.se',enabled:false},ac);assert.equal(mailConfig.status,200);const safeConfig=await mailConfig.json();assert.equal(safeConfig.password_saved,true);assert.ok(!JSON.stringify(safeConfig).includes('abcdefghijklmnop'));assert.ok(!('app_password' in safeConfig));assert.ok(!('secret' in safeConfig));
+ const savedConfig=await(await call('email-settings','GET',null,ac)).json();assert.equal(savedConfig.gmail_address,'test@gmail.com');assert.equal(savedConfig.enabled,false);
+ assert.equal((await call('email-settings/test','POST',{to:'invalid'},ac)).status,400);
+ assert.equal((await call('email-settings','PUT',{gmail_address:'changed@gmail.com',app_password:'',app_url:'https://katthem.example.se',enabled:false},ac)).status,400);
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
@@ -184,4 +192,34 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  vm.runInContext("newUser('admin')",context);assert.match(elements.get('#modal').innerHTML,/value="admin" selected/);
  await vm.runInContext('bookSlot(5)',context);assert.match(elements.get('#modal').innerHTML,/Är du säker/);assert.equal(requests[0].confirmOverLimit,false);
  await elements.get('#confirm-over-limit').onclick();assert.equal(requests[1].confirmOverLimit,true);assert.equal(elements.get('#modal').open,false);
+});
+
+test('Gmail-inställningar: kryptering, beständighet, testmejl och säkra fel',async()=>{
+ const dataDir=mkdtempSync(path.join(tmpdir(),'katthem-mail-test-')),password='abcdefghijklmnop',messages=[],options=[];
+ const fakeTransport=opts=>{options.push(opts);return {sendMail:async message=>{messages.push(message)},close(){}}};
+ const config={dataDir,defaultUrl:'https://katthem.example.se',production:true,createTransport:fakeTransport};
+ try{
+  const service=createEmailSettings(config);assert.equal(service.status().configured,false);
+  assert.throws(()=>service.save({gmail_address:'test@gmail.com',app_password:'short',app_url:'https://katthem.example.se',enabled:true}),/16/);
+  assert.throws(()=>service.save({gmail_address:'test@gmail.com',app_password:password,app_url:'http://katthem.example.se',enabled:true}),/HTTPS/);
+  const saved=service.save({gmail_address:'test@gmail.com',app_password:'abcd efgh ijkl mnop',app_url:'https://katthem.example.se',enabled:false});assert.equal(saved.password_saved,true);assert.equal(service.status().configured,false);
+  assert.ok(!readFileSync(path.join(dataDir,'email-settings.json'),'utf8').includes(password));assert.equal(readFileSync(path.join(dataDir,'email-secret.key')).length,32);
+  await service.test('recipient@example.se');assert.equal(messages.length,1);assert.equal(options[0].host,'smtp.gmail.com');assert.equal(options[0].secure,true);assert.equal(options[0].port,465);assert.equal(options[0].auth.pass,password);assert.equal(messages[0].to,'recipient@example.se');
+  const restarted=createEmailSettings(config);restarted.save({gmail_address:'test@gmail.com',app_password:'',app_url:'https://katthem.example.se',enabled:true});assert.equal(restarted.status().configured,true);
+  await restarted.send({to:'recipient@example.se',subject:'Påminnelse',text:'Ditt pass börjar snart',key:'reminder-test'});assert.equal(messages.length,2);assert.ok(messages[1].messageId);
+  assert.throws(()=>restarted.save({gmail_address:'other@gmail.com',app_password:'',app_url:'https://katthem.example.se',enabled:true}),/nytt applösenord/);
+  await assert.rejects(()=>restarted.test('invalid'),/mottagaradress/);
+  const broken=createEmailSettings({...config,createTransport:()=>({sendMail:async()=>{throw Object.assign(Error('secret '+password),{code:'EAUTH'})},close(){}})});
+  await assert.rejects(()=>broken.test('recipient@example.se'),error=>error.status===502&&/nekade inloggningen/.test(error.message)&&!error.message.includes(password));
+ }finally{rmSync(dataDir,{recursive:true,force:true})}
+});
+
+test('Gmail-formulär: sparat lösenord visas inte och testknapp kräver sparade uppgifter',async()=>{
+ const elements=new Map(),settings={gmail_address:'katthem@gmail.com',app_url:'https://katthem.example.se',enabled:false,password_saved:false};
+ const makeElement=()=>({innerHTML:'',style:{},querySelectorAll:()=>[],querySelector:()=>({}),showModal(){this.open=true},close(){this.open=false}});
+ const document={querySelector(selector){if(!elements.has(selector))elements.set(selector,makeElement());return elements.get(selector)}};
+ const context=vm.createContext({document,Date,setTimeout,FormData:class{},fetch:async url=>url==='/api/state'?new Promise(()=>{}):{ok:true,json:async()=>settings}});
+ vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);vm.runInContext("state={user:{email:'admin@example.se'}}",context);
+ await vm.runInContext('emailSettingsDialog()',context);assert.match(elements.get('#modal').innerHTML,/Gmail-applösenord/);assert.match(elements.get('#modal').innerHTML,/<button disabled>Skicka testmejl/);
+ settings.password_saved=true;await vm.runInContext('emailSettingsDialog()',context);assert.match(elements.get('#modal').innerHTML,/Ett applösenord finns sparat/);assert.doesNotMatch(elements.get('#modal').innerHTML,/<button disabled>Skicka testmejl/);assert.doesNotMatch(elements.get('#modal').innerHTML,/name="app_password"[^>]*value=/);
 });

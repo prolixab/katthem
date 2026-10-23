@@ -1,1 +1,15 @@
-{"name":"katthem-bokning","private":true,"version":"1.0.0","scripts":{"start":"node server.mjs","test":"node --test test.mjs"},"engines":{"node":">=24"}}
+{
+  "name": "katthem-bokning",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "nodemailer": "10.2.1"
+  }
+}
