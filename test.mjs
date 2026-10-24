@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {isAdmin,isSuperAdmin,canManageAccount,isGreen} from './roles.mjs';
 import {upgradeDefaultShifts} from './schedule-upgrade.mjs';
 import {createEmailSettings} from './email-settings.mjs';
 import {monthAgo,isInactive} from './activity.mjs';
@@ -32,7 +33,20 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');
  assert.equal((await call('users/'+uid,'PATCH',{role:'admin'},vc)).status,403);
  let roleChange=await call('users/'+uid,'PATCH',{role:'admin'},ac);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'admin');
- roleChange=await call('users/'+uid,'PATCH',{role:'volunteer'},newAdminCookie);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'volunteer');
+ assert.equal((await call('users/'+uid,'PATCH',{role:'volunteer'},newAdminCookie)).status,403);
+ roleChange=await call('users/'+uid,'PATCH',{role:'volunteer'},ac);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'volunteer');
+ assert.equal((await call('users','POST',{name:'Otillåten admin',email:'forbidden-admin@example.se',password:'Password12345',role:'admin'},newAdminCookie)).status,403);
+ assert.equal((await call('users','POST',{name:'Otillåten superadmin',email:'forbidden-super@example.se',password:'Password12345',role:'superadmin'},newAdminCookie)).status,403);
+ assert.equal((await call('users/'+uid,'PATCH',{role:'superadmin'},newAdminCookie)).status,403);
+ assert.equal((await call('users/'+uid,'PATCH',{green:true},newAdminCookie)).status,200);assert.equal((await call('users/'+uid,'PATCH',{green:false},newAdminCookie)).status,200);
+ const superState=await(await call('state','GET',null,ac)).json();assert.equal(superState.user.role,'superadmin');
+ assert.equal((await call('users/'+superState.user.id,'PATCH',{active:0},newAdminCookie)).status,403);
+ assert.equal((await call('users/'+superState.user.id+'/password','POST',{password:'Blocked12345'},newAdminCookie)).status,403);
+ assert.equal((await call('email-settings','GET',null,newAdminCookie)).status,403);
+ assert.equal((await call('email-settings','PUT',{},newAdminCookie)).status,403);
+ assert.equal((await call('email-settings/test','POST',{to:'test@example.se'},newAdminCookie)).status,403);
+ assert.equal((await call('export','GET',null,newAdminCookie)).status,200);
+ assert.equal((await call('users','POST',{name:'Adminens volontär',email:'admin-volunteer@example.se',password:'Password12345'},newAdminCookie)).status,200);
  const adminState=await(await call('state','GET',null,ac)).json();assert.equal((await call('users/'+adminState.user.id,'PATCH',{role:'volunteer'},ac)).status,400);
  assert.equal((await call('reminders/send','POST',{},vc)).status,403);assert.equal((await call('reminders/send','POST',{},ac)).status,503);
  assert.equal((await call('email-settings','GET',null,vc)).status,403);
@@ -55,6 +69,9 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('state','GET',null,resetCookie1)).status,401);assert.equal((await call('state','GET',null,resetCookie2)).status,401);
  assert.equal((await loginReset('Original12345')).status,401);assert.equal((await loginReset('Changed12345')).status,200);
  assert.equal((await call('state','GET',null,ac)).status,200);
+ const ordinaryVolunteer=(await(await call('state','GET',null,ac)).json()).users.find(u=>u.email==='admin-volunteer@example.se');
+ assert.equal((await call('users/'+ordinaryVolunteer.id+'/password','POST',{password:'NewVolunteer12345'},newAdminCookie)).status,200);
+ assert.equal((await call('users/'+ordinaryVolunteer.id,'PATCH',{active:0},newAdminCookie)).status,200);
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
@@ -141,8 +158,8 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='18:00')assert.equal(item.title,'Socialiseringsgruppen');if(Number(item.date.slice(-2))<=7&&item.start==='16:00'){assert.equal(item.cancelled,1);assert.equal((await call('bookings','POST',{slotId:item.id},vc)).status,409)}}}
  const csv=await call('export','GET',null,ac);assert.match(await csv.text(),/Testpass/);
  await stop();
- const legacy=new DatabaseSync(path.join(dir,'katthem.sqlite'));legacy.exec("ALTER TABLE slots DROP COLUMN cancelled; UPDATE slots SET capacity=2; UPDATE slots SET title='Kvällspass' WHERE start='18:00';" );legacy.close();
- await start();s=await(await call('state','GET',null,ac)).json();assert.equal(s.slots.find(x=>x.id===slot.id).booked,2);assert.equal(s.slots.find(x=>x.id===slot.id).capacity,0);assert.equal(s.users.find(u=>u.email==='grupp@example.se').green_manual,true);assert.ok(readFileSync(path.join(dir,'schema-v1-backup.sqlite')).length>0);
+ const legacy=new DatabaseSync(path.join(dir,'katthem.sqlite'));const originalHash=legacy.prepare('SELECT password FROM users WHERE email=?').get('admin@katthem.local').password;const danielId=Number(legacy.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,'admin',?)").run('Daniel','daniel@staahlis.se',originalHash,Date.now()).lastInsertRowid);legacy.prepare('INSERT INTO sessions VALUES(?,?,?)').run('old-daniel-session',danielId,Date.now()+86400000);legacy.prepare('DELETE FROM migrations WHERE name=?').run('superadmin-daniel-20261024');legacy.exec("ALTER TABLE slots DROP COLUMN cancelled; UPDATE slots SET capacity=2; UPDATE slots SET title='Kvällspass' WHERE start='18:00';" );legacy.close();
+ await start();s=await(await call('state','GET',null,ac)).json();assert.equal(s.users.find(u=>u.email==='daniel@staahlis.se').role,'superadmin');assert.equal((await call('state','GET',null,'session=old-daniel-session')).status,401);const danielLogin=await call('login','POST',{email:'daniel@staahlis.se',password:passwords[0]});assert.equal(danielLogin.status,200);assert.equal((await danielLogin.json()).user.role,'superadmin');assert.equal(s.slots.find(x=>x.id===slot.id).booked,2);assert.equal(s.slots.find(x=>x.id===slot.id).capacity,0);assert.equal(s.users.find(u=>u.email==='grupp@example.se').green_manual,true);assert.ok(readFileSync(path.join(dir,'schema-v1-backup.sqlite')).length>0);
  for(const item of s.bookings.filter(b=>b.slot_id===slot.id))assert.equal((await call('bookings/'+item.id,'DELETE',null,ac)).status,200);
  r=await call('bookings','POST',{slotId:slot.id},vc);assert.equal(r.status,200);
  r=await call('slots','POST',{date,start:'12:30',end:'13:30',title:'Överlapp',capacity:2},ac);const overlap=(await r.json()).slots.find(x=>x.title==='Överlapp');assert.equal((await call('bookings','POST',{slotId:overlap.id},vc)).status,409);
@@ -196,7 +213,7 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  const element=()=>({innerHTML:'',style:{},querySelectorAll:()=>[],querySelector:()=>({}),showModal(){this.open=true},close(){this.open=false}});
  const document={querySelector(s){if(s==='#password-form')return null;if(!elements.has(s))elements.set(s,element());return elements.get(s)}};
  const future=new Date(Date.now()+7200000),date=[future.getFullYear(),String(future.getMonth()+1).padStart(2,'0'),String(future.getDate()).padStart(2,'0')].join('-'),start=String(future.getHours()).padStart(2,'0')+':'+String(future.getMinutes()).padStart(2,'0');
- const fixture={user:{id:1,name:'Admin',email:'admin@example.se',role:'admin',completed_shifts:0},users:[{id:2,name:'Volontär',email:'volunteer@example.se',role:'volunteer',active:1,completed_shifts:0,inactive_month:true}],slots:[{id:5,date,start,end:'23:59',title:'Öppet hus',kind:'open_house',mine:1,booked:7,minimum_staff:2,cancelled:0}],bookings:[],email_reminders:{configured:false}};
+ const fixture={user:{id:1,name:'Admin',email:'admin@example.se',role:'superadmin',completed_shifts:0},users:[{id:2,name:'Volontär',email:'volunteer@example.se',role:'volunteer',active:1,completed_shifts:0,inactive_month:true}],slots:[{id:5,date,start,end:'23:59',title:'Öppet hus',kind:'open_house',mine:1,booked:7,minimum_staff:2,cancelled:0}],bookings:[],email_reminders:{configured:false}};
  const context=vm.createContext({document,Date,setTimeout,FormData:class{},fixture,fetch:async(url,options)=>{if(url==='/api/state')return new Promise(()=>{});requests.push(JSON.parse(options.body));return requests.length===1?{ok:false,status:409,json:async()=>({error:'Redan 7',code:'RECOMMENDED_LIMIT'})}:{ok:true,json:async()=>fixture}}});
  vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);
  vm.runInContext("state=fixture;view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Volontärer att följa upp/);assert.match(elements.get('#app').innerHTML,/Gör till admin/);assert.match(elements.get('#app').innerHTML,/dina pass inom nästa dygn/);
@@ -207,6 +224,8 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  vm.runInContext('resetUserPassword(2)',context);assert.match(elements.get('#modal').innerHTML,/Byt lösenord för Volontär/);assert.match(elements.get('#modal').innerHTML,/name="confirm"/);assert.match(elements.get('#modal').innerHTML,/Alla inloggningar/);
  await vm.runInContext('bookSlot(5)',context);assert.match(elements.get('#modal').innerHTML,/Är du säker/);assert.equal(requests[0].confirmOverLimit,false);
  await elements.get('#confirm-over-limit').onclick();assert.equal(requests[1].confirmOverLimit,true);assert.equal(elements.get('#modal').open,false);
+ fixture.user.role='admin';vm.runInContext("view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Skapa händelse/);assert.match(elements.get('#app').innerHTML,/Byt lösenord/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-role-user=/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-action="new-admin"/);assert.doesNotMatch(elements.get('#app').innerHTML,/id="email-settings"/);
+ vm.runInContext('newUser()',context);assert.doesNotMatch(elements.get('#modal').innerHTML,/option value="admin"/);
 });
 
 test('Gmail-inställningar: kryptering, beständighet, testmejl och säkra fel',async()=>{
@@ -257,3 +276,11 @@ test('Uppgradera ursprungligt schema: behåll bokningar och anpassade pass, inga
   const count=db.prepare('SELECT COUNT(*) n FROM slots').get().n;assert.equal(upgradeDefaultShifts(db,rules),false);assert.equal(db.prepare('SELECT COUNT(*) n FROM slots').get().n,count);
  }finally{db.close()}
 });
+
+test('Roller: admin och superadmin delar verksamhetsbehörighet men kontoskydd skiljer',()=>{
+ const volunteer={role:'volunteer'},admin={role:'admin'},superadmin={role:'superadmin'};
+ assert.equal(isAdmin(volunteer),false);assert.equal(isAdmin(admin),true);assert.equal(isAdmin(superadmin),true);assert.equal(isSuperAdmin(admin),false);assert.equal(isSuperAdmin(superadmin),true);
+ assert.equal(canManageAccount(admin,volunteer),true);assert.equal(canManageAccount(admin,admin),false);assert.equal(canManageAccount(admin,superadmin),false);assert.equal(canManageAccount(superadmin,admin),true);assert.equal(canManageAccount(superadmin,superadmin),true);
+});
+
+test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},15),false);assert.equal(isGreen({role:'volunteer'},16),true)});

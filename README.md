@@ -104,3 +104,11 @@ Admin kan sätta ett nytt lösenord för ett annat konto via Administration → 
 ## Version 0.2.002 – uppgradering av befintligt schema
 
 De ursprungliga automatiska passen 08–10 och 17–19 uppdateras en gång vid start till 08–12 och 18–20. Eftermiddagspass 16–18 läggs till på dessa datum om de saknas. Söndagsreglerna tillämpas och boknings-ID samt konton bevaras. Endast pass med de ursprungliga namnen, tiderna och standardtexterna matchas; anpassade pass och händelser lämnas kvar. En databaskopia före tiduppgraderingen sparas i datamappen. Lokala och publicerade databaser är separata och synkas inte via GitHub. Driftsätt den nya koden för att uppgradera serverns befintliga schema. Hänvisningar till lokala startkonton och märkningen Lokal version visas inte längre i gränssnittet.
+
+## Superadmin och admin (version 0.2.003)
+
+Båda rollerna får hantera schema, bokningar, händelser, volontärer och lokala prototyper för kattinfo och medlemmar. Endast superadmin får skapa administratörer eller superadministratörer, ändra behörigheter, hantera administratörskonton och deras lösenord samt läsa eller ändra e-postinställningar. Admin kan skapa och hantera volontärkonton och byta volontärers lösenord. Båda kan starta en påminnelsekontroll utan att ändra e-postinställningar. Eget lösenord byts under Mitt konto; egen roll eller aktivering kan inte ändras i kontolistan.
+
+En ny databas får ett lokalt startkonto med rollen superadmin. För en befintlig installation utan aktiv superadmin kan BOOTSTRAP_SUPERADMIN_EMAIL sättas till ett befintligt aktivt kontos e-postadress vid start; kontot befordras och gamla sessioner avslutas. Adressen väljs aldrig automatiskt. Ta därefter bort miljövariabeln. Den publicerade installationen ändras inte av lokala rolländringar.
+
+Version 0.2.003 innehåller en engångsuppgradering av det befintliga aktiva kontot daniel@staahlis.se till superadmin. Kontots lösenord ändras inte; tidigare sessioner avslutas. Uppgraderingen skapar inget konto om adressen saknas. Alla admins och superadmins grönmarkeras automatiskt.

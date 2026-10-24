@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isAdmin,isSuperAdmin,canManageAccount,isGreen } from './roles.mjs';
 import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
 import { createEmailSettings } from './email-settings.mjs';
 import { isInactive } from './activity.mjs';
@@ -54,7 +55,7 @@ function verify(p,h){const [s,k]=h.split(':');return timingSafeEqual(scryptSync(
 function localDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
  const admin=randomBytes(9).toString('base64url'), volunteer=randomBytes(9).toString('base64url');
- db.prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)').run('Administratör','admin@katthem.local',hash(admin),'admin');
+ db.prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)').run('Administratör','admin@katthem.local',hash(admin),'superadmin');
  db.prepare('INSERT INTO users(name,email,password,role) VALUES(?,?,?,?)').run('Alex Volontär','alex@katthem.local',hash(volunteer),'volunteer');
  writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Startkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`,{mode:0o600});
  const monday=new Date();monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
@@ -62,6 +63,13 @@ if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
  for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']]){const rule=sundayRules(localDate(date),start,end,title,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');insert.run(localDate(date),start,end,rule.title,0,rule.note,rule.cancelled);}}
 }
 db.prepare('UPDATE users SET created_at=? WHERE created_at=0').run(Date.now());
+// Explicit bootstrap for existing installations; never choose a person's account automatically.
+if(process.env.BOOTSTRAP_SUPERADMIN_EMAIL&&!db.prepare("SELECT id FROM users WHERE role='superadmin' AND active=1").get()){
+ const selected=db.prepare('SELECT id FROM users WHERE email=? AND active=1').get(process.env.BOOTSTRAP_SUPERADMIN_EMAIL.trim().toLowerCase());
+ if(!selected)throw Error('BOOTSTRAP_SUPERADMIN_EMAIL måste matcha ett befintligt aktivt konto.');
+ db.prepare("UPDATE users SET role='superadmin' WHERE id=?").run(selected.id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(selected.id);
+}
+
 // Add open house once for each first Sunday already present in the schedule.
 db.exec('CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY)');
 if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('default-shifts-08-12-16-18-18-20-v1')&&db.prepare("SELECT id FROM slots WHERE (start='08:00' AND end='10:00') OR (start='17:00' AND end='19:00') LIMIT 1").get()&&!existsSync(path.join(dataDir,'before-shift-times-upgrade.sqlite')))db.prepare('VACUUM INTO ?').run(path.join(dataDir,'before-shift-times-upgrade.sqlite'));
@@ -78,6 +86,14 @@ function ensureOpenHouse(){
  for(let month=0;month<12;month++){const d=new Date(now.getFullYear(),now.getMonth()+month,1,12);d.setDate(1+(7-d.getDay())%7);const date=localDate(d);insert.run(date,date)}
 }
 ensureOpenHouse();
+// One-time assignment explicitly requested by the account owner.
+if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('superadmin-daniel-20261024')){
+ db.exec('BEGIN IMMEDIATE');try{
+ const selected=db.prepare('SELECT id FROM users WHERE email=? AND active=1').get('daniel@staahlis.se');
+ if(selected){db.prepare("UPDATE users SET role='superadmin' WHERE id=?").run(selected.id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(selected.id)}
+ db.prepare('INSERT INTO migrations VALUES(?)').run('superadmin-daniel-20261024');db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e}
+}
 const emailSettings=createEmailSettings({dataDir,defaultUrl:appOrigin||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
 const reminders=createReminders(db,{mailProvider:emailSettings});
 const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
@@ -88,11 +104,11 @@ function completedCounts(userId){
  for(const b of rows){const ended=new Date(b.date+'T'+b.end+':00').getTime();if(ended<=now){counts.set(b.user_id,(counts.get(b.user_id)||0)+1);counts.last.set(b.user_id,Math.max(counts.last.get(b.user_id)||0,ended))}}
  return counts;
 }
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,last_completed_at:counts.last.get(u.id)||null,inactive_month:isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),green:u.role==='volunteer'&&(Boolean(u.green_manual)||completed>15)}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,last_completed_at:counts.last.get(u.id)||null,inactive_month:isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),green:isGreen(u,completed)}}
 function snapshot(user){
  ensureOpenHouse();
- const counts=completedCounts(user.role==='admin'?undefined:user.id);
- return {email_reminders:user.role==='admin'?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id),bookings:user.role==='admin'?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:user.role==='admin'?db.prepare('SELECT id,name,email,role,active,green_manual,created_at FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ const counts=completedCounts(isAdmin(user)?undefined:user.id);
+ return {email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -127,7 +143,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(token);res.setHeader('Set-Cookie',`session=; ${cookieOptions}; Max-Age=0`);return send({ok:true})}
  if(url.pathname==='/api/password'&&req.method==='POST'){const p=await body(req);if(typeof p.current!=='string'||!verify(p.current,user.password))fail('Nuvarande lösenord stämmer inte.');if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');db.prepare('UPDATE users SET password=? WHERE id=?').run(hash(p.password),user.id);db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(user.id,token);return send({ok:true})}
  if(url.pathname==='/api/bookings'&&req.method==='POST'){
- const p=await body(req),uid=user.role==='admin'&&p.userId?Number(p.userId):user.id;
+ const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;
  db.exec('BEGIN IMMEDIATE');try{
  const slot=db.prepare('SELECT * FROM slots WHERE id=?').get(Number(p.slotId));if(!slot)fail('Passet finns inte.',404);
  if(slot.cancelled)fail(slot.kind==='event'?'Händelsen är inställd.':'Passet är inställt på grund av öppet hus.',409);
@@ -140,9 +156,10 @@ const server=http.createServer(async(req,res)=>{
  }catch(e){db.exec('ROLLBACK');throw e}return send(snapshot(user));}
  if(url.pathname.startsWith('/api/bookings/')&&req.method==='DELETE'){
  const b=db.prepare('SELECT b.*,s.date,s.start FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.id=?').get(Number(url.pathname.split('/').pop()));if(!b)fail('Bokningen finns inte.',404);
- if(user.role!=='admin'){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta administratören.');}
+ if(!isAdmin(user)){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta administratören.');}
  db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);return send(snapshot(user));}
- if(user.role!=='admin')fail('Du saknar administratörsbehörighet.',403);
+ if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(url.pathname.startsWith('/api/email-settings')&&!isSuperAdmin(user))fail('Endast superadmin får hantera e-postinställningar.',403);
  if(url.pathname==='/api/email-settings'&&req.method==='GET')return send(emailSettings.settings());
  if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);return send(emailSettings.save(p))}
  if(url.pathname==='/api/email-settings/test'&&req.method==='POST'){const p=await body(req);return send(await emailSettings.test(p.to))}
@@ -153,13 +170,13 @@ const server=http.createServer(async(req,res)=>{
  if(/^\/api\/users\/\d+\/password$/.test(url.pathname)&&req.method==='POST'){
   const id=Number(url.pathname.split('/')[3]),p=await body(req);
   if(id===user.id)fail('Byt ditt eget lösenord under Mitt konto.');
-  if(!db.prepare('SELECT id FROM users WHERE id=?').get(id))fail('Kontot finns inte.',404);
+  const target=db.prepare('SELECT id,role FROM users WHERE id=?').get(id);if(!target)fail('Kontot finns inte.',404);if(!canManageAccount(user,target))fail('Endast superadmin får byta administratörers lösenord.',403);
   if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');
   const passwordHash=hash(p.password);
   db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE users SET password=? WHERE id=?').run(passwordHash,id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
   return send(snapshot(user));
  }
- if(url.pathname==='/api/users'&&req.method==='POST'){const p=await body(req);if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Ange namn, giltig e-post och lösenord med 10–200 tecken.');if(db.prepare('SELECT id FROM users WHERE email=?').get(p.email.trim().toLowerCase()))fail('E-postadressen finns redan.');if(p.role!==undefined&&!['admin','volunteer'].includes(p.role))fail('Ogiltig roll.');db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),hash(p.password),p.role||'volunteer',Date.now());return send(snapshot(user));}
+ if(url.pathname==='/api/users'&&req.method==='POST'){const p=await body(req);if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Ange namn, giltig e-post och lösenord med 10–200 tecken.');if(db.prepare('SELECT id FROM users WHERE email=?').get(p.email.trim().toLowerCase()))fail('E-postadressen finns redan.');if(p.role!==undefined&&!['superadmin','admin','volunteer'].includes(p.role))fail('Ogiltig roll.');if((p.role||'volunteer')!=='volunteer'&&!isSuperAdmin(user))fail('Endast superadmin får skapa administratörskonton.',403);db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),hash(p.password),p.role||'volunteer',Date.now());return send(snapshot(user));}
 
  if(['/api/users/import-preview','/api/users/import'].includes(url.pathname)&&req.method==='POST'){
   const p=await body(req,1000000),entries=importEntries(p);
@@ -171,11 +188,12 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname.startsWith('/api/users/')&&req.method==='PATCH'){
   const id=Number(url.pathname.split('/').pop()),p=await body(req),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);
   if(!target)fail('Kontot finns inte.',404);
+  if(!canManageAccount(user,target))fail('Endast superadmin får hantera administratörskonton.',403);
   const hasActive=Object.hasOwn(p,'active'),hasGreen=Object.hasOwn(p,'green'),hasRole=Object.hasOwn(p,'role');
   if(!hasActive&&!hasGreen&&!hasRole)fail('Ange en ändring.');
   if(hasActive&&(id===user.id||![true,false,0,1].includes(p.active)))fail('Ogiltig aktivering eller försök att ändra eget konto.');
   if(hasGreen&&(target.role!=='volunteer'||typeof p.green!=='boolean'))fail('Grönmarkering gäller endast volontärer.');
-  if(hasRole&&(!['admin','volunteer'].includes(p.role)||id===user.id))fail('Ogiltig roll eller försök att ändra egen roll.');db.prepare('UPDATE users SET active=?,green_manual=?,role=? WHERE id=?').run(hasActive?Number(p.active):target.active,hasGreen?Number(p.green):target.green_manual,hasRole?p.role:target.role,id);return send(snapshot(user));
+  if(hasRole&&!isSuperAdmin(user))fail('Endast superadmin får ändra behörigheter.',403);if(hasRole&&(!['superadmin','admin','volunteer'].includes(p.role)||id===user.id))fail('Ogiltig roll eller försök att ändra egen roll.');db.prepare('UPDATE users SET active=?,green_manual=?,role=? WHERE id=?').run(hasActive?Number(p.active):target.active,hasGreen?Number(p.green):target.green_manual,hasRole?p.role:target.role,id);return send(snapshot(user));
  }
 
  if(url.pathname==='/api/slots'&&req.method==='POST'){
