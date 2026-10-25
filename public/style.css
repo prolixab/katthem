@@ -10,3 +10,15 @@
 .reminder-notice{background:#e7efe2;border-left:4px solid #397144;margin-bottom:24px}.reminder-notice p{margin:8px 0}.reminder-notice button{font-size:12px;padding:5px 10px}
 
 .version-footer{margin:0;padding:12px 20px;text-align:center;font-size:12px;color:var(--muted)}
+
+.info-text{white-space:pre-wrap;overflow-wrap:anywhere}.dialog-actions{flex-wrap:wrap}.login-form #forgot-password{width:auto;margin-top:16px}#refresh-status{font-size:11px}
+
+#refresh-schedule{margin-right:10px}#refresh-schedule+.small{display:block}
+
+.portal-manual details{border-top:1px solid var(--line);padding:14px 0}.portal-manual summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}.portal-manual summary:focus-visible{outline:2px solid var(--green);outline-offset:4px}.portal-manual ol{padding-left:24px;margin:14px 0 4px}.portal-manual li{padding-left:4px;margin:0 0 12px;overflow-wrap:anywhere}
+
+.slot .slot-extra{white-space:pre-wrap;overflow-wrap:anywhere;background:#e9eedf;color:var(--green);border-left:3px solid var(--green);border-radius:4px;padding:7px;font-size:12px;margin:0 0 12px}
+
+.slot.understaffed{background:#fff1ee;border-color:#d89b94;border-top-color:#b5362f}.slot.understaffed .spots{color:#9b2923;font-weight:600}.legend{flex-wrap:wrap}.dot.red{background:#b5362f}
+
+.onboarding-checklist fieldset{border:0;border-top:1px solid var(--line);margin:22px 0 0;padding:16px 0 0;min-width:0}.onboarding-checklist legend{font-size:17px;font-weight:650;padding:0 10px 0 0}.checklist-item{align-items:flex-start;gap:12px;padding:9px 0;margin:0;font-size:14px;font-weight:400;cursor:pointer}.checklist-item input{flex:0 0 auto;width:19px;height:19px;margin:2px 0 0;accent-color:var(--green)}.checklist-item span{overflow-wrap:anywhere}

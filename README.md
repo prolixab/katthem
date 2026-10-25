@@ -28,8 +28,8 @@ Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https:/
 ## Funktioner
 
 - Inloggning med separata roller och lösenord lagrade med salt och scrypt.
-- Veckoschema med sex veckors pass kl. 08–12, 16–18 och 18–20 från första starten.
-- Bokning med rekommenderat tak på sju deltagare (fler kan boka efter bekräftelse), minst två volontärer per pass och skydd mot dubbelbokning och överlappande pass.
+- Veckoschema med automatisk påfyllning av pass kl. 08–12, 16–18 och 18–20 för 42 dagar från dagens datum.
+- Bokning med rekommenderat tak på sju deltagare (fler kan boka efter bekräftelse), minst två volontärer per pass och skydd mot dubbla bokningar av samma pass och en bekräftelsefråga vid överlappande pass.
 - Mina bokningar och avbokning fram till 24 timmar innan passet.
 - Administratören kan lägga till och inaktivera volontärer, skapa och ställa in pass samt boka och avboka åt andra.
 - Administratörens volontärlista visar genomförda pass. Bokningar på avslutade, ej inställda pass räknas; volontärer med fler än 15 pass markeras grönt. Detta är en beräkning utifrån bokningar, inte närvaroregistrering.
@@ -43,11 +43,11 @@ All data sparas lokalt i **data/katthem.sqlite**. Stoppa appen och kopiera data-
 
 I Coolify ligger samma filer i `/app/data` på den beständiga volymen. Volymen ersätter inte säkerhetskopior: stoppa applikationen före filkopiering, spara kopian utanför driftservern och prova återställning. Ta säkerhetskopia före uppdateringar. På en ny server återställs filerna till en volym med samma destination och skrivbehörighet före appstart.
 
-Pass använder datorns lokala tid. Använd svensk tidszon på datorn. Inaktivering tar inte bort befintliga bokningar; administratören hanterar dessa i schemat. Inställning av ett pass tar bort dess bokningar efter bekräftelse.
+Pass använder datorns lokala tid. Använd svensk tidszon på datorn. Inaktivering tar inte bort befintliga bokningar; administratören hanterar dessa i schemat. Inställning av ett pass bevarar passet och bokningarna i historiken men stoppar nya bokningar och påminnelser.
 
 ## Nästa version
 
-Automatisk Google Sheets-synkning, lösenordsåterställning, återkommande personliga bokningar och ändring av befintliga pass ingår inte ännu. Nya pass skapas var för sig; de första sex veckorna läggs in automatiskt. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
+Automatisk Google Sheets-synkning och återkommande personliga bokningar ingår inte ännu. Schemat fylls automatiskt på sex veckor framåt. Befintliga vanliga pass och extra händelser kan ändras, och lösenordsåterställning finns på inloggningssidan. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
 
 ## Verifiering
 
@@ -67,7 +67,7 @@ Om repot ligger på en nätverksenhet används %LOCALAPPDATA%\Katthem\data för 
 
 Admin kan skapa konton med rollen Administratör eller Volontär under Lägg till konto. Befintliga konton kan byta roll med en bekräftelse; egen roll och egen aktivering kan inte ändras. CSV-import skapar fortsatt endast volontärer.
 
-Öppet hus är ett eget bokningsbart pass 11–15 första söndagen varje månad i det befintliga sexveckorsschemat. Volontärer bokar sig själva och admin kan boka åt andra. Ordinarie pass 16–18 är fortsatt inställt den dagen. Öppet hus fylls automatiskt på tolv månader framåt och kan inte skapas, flyttas eller tas bort manuellt. Överlappande personliga bokningar är fortsatt blockerade.
+Öppet hus är ett eget bokningsbart pass 11–15 första söndagen varje månad i det befintliga sexveckorsschemat. Volontärer bokar sig själva och admin kan boka åt andra. Ordinarie pass 16–18 är fortsatt inställt den dagen. Öppet hus fylls automatiskt på tolv månader framåt och kan inte skapas, flyttas eller tas bort manuellt. Överlappande personliga bokningar kräver en extra bekräftelse.
 
 Alla pass har ett rekommenderat tak på sju personer. Den åttonde och senare bokningen kräver en uttrycklig extra bekräftelse, även via API och när admin bokar åt någon annan.
 
@@ -83,7 +83,7 @@ Tekniska referenser: [Resend Send Email](https://resend.com/docs/api-reference/e
 
 Admin skapar en händelse under Administration → Skapa händelse med namn, datum, start, slut och information. Händelsen visas i veckoschemat och i listan Händelser under Administration. Volontärer kan boka sig och admin kan boka åt andra. Skapa admin och Gör till admin finns kvar.
 
-Ändra / boka om bevarar deltagarnas bokningar. En flytt stoppas om någon deltagare har en överlappande bokning. Vid tidsändring nollställs tidigare e-postpåminnelser för deltagarna, så nästa kontroll kan påminna om den nya tiden. Informera deltagarna separat om ändringen.
+Ändra / boka om bevarar deltagarnas bokningar. En flytt kräver extra bekräftelse om någon deltagare har en överlappande bokning. Vid tidsändring nollställs tidigare e-postpåminnelser för deltagarna, så nästa kontroll kan påminna om den nya tiden. Bokade deltagare får ändringsmejl via den aktiverade e-postkopplingen.
 
 Ställ in händelse spärrar nya bokningar och påminnelser men behåller bokningshistoriken; den räknas inte som genomförd. En inställd händelse kan aktiveras igen med Boka om. Avslutade händelser kan inte ändras. Öppet hus ligger fast första söndagen i månaden kl. 11–15.
 
@@ -112,3 +112,56 @@ Båda rollerna får hantera schema, bokningar, händelser, volontärer och lokal
 En ny databas får ett lokalt startkonto med rollen superadmin. För en befintlig installation utan aktiv superadmin kan BOOTSTRAP_SUPERADMIN_EMAIL sättas till ett befintligt aktivt kontos e-postadress vid start; kontot befordras och gamla sessioner avslutas. Adressen väljs aldrig automatiskt. Ta därefter bort miljövariabeln. Den publicerade installationen ändras inte av lokala rolländringar.
 
 Version 0.2.003 innehåller en engångsuppgradering av det befintliga aktiva kontot daniel@staahlis.se till superadmin. Kontots lösenord ändras inte; tidigare sessioner avslutas. Uppgraderingen skapar inget konto om adressen saknas. Alla admins och superadmins grönmarkeras automatiskt.
+
+
+## Version 0.2.004 – löpande schema och volontärstöd
+
+### Automatisk påfyllning
+
+Vid start, vid hämtning av schemat och varje minut kontrollerar appen att ordinarie pass finns för 42 dagar från dagens datum. Söndagsreglerna gäller även nya pass. Befintliga pass och bokningar bevaras. Ett flyttat eller inställt pass återskapas inte på sin ursprungliga plats. Påfyllningen sparar därför passens ursprung i databasen. Öppet hus fortsätter fyllas på tolv månader framåt.
+
+### Redigera och ställa in
+
+Admin och superadmin kan öppna ett vanligt pass eller en extra händelse och välja **Ändra / boka om**. Namn, datum, tider och information kan ändras. Deltagarnas boknings-ID behålls, och en tidsändring kräver extra bekräftelse om den krockar med en deltagares andra aktiva bokning. Avslutade pass och automatiskt öppet hus kan inte ändras. Ett inställt pass kan bokas om och återaktiveras efter samma kontroller.
+
+**Ställ in** behåller pass och deltagare i historiken, spärrar nya bokningar och påminnelser och undantar passet från genomförda pass. Samma beteende gäller vanliga pass och händelser. Volontären ser kommande inställda egna pass under Mina bokningar. CSV-exporten har en statuskolumn för att skilja inställda och aktiva pass.
+
+### Ändringsmejl
+
+Ändrat namn, datum, tid eller information samt inställning och återaktivering köar ett mejl till varje aktiv bokad deltagare. Kön sparas i SQLite i samma transaktion som ändringen. Utskick försöks direkt och därefter varje minut. Misslyckade utskick och utskick som väntar på aktiverad e-post finns kvar efter omstart. Administration visar antalet väntande och misslyckade ändringsmejl. Utskick använder samma Gmail- eller Resend-koppling som påminnelserna. Inga mejl skickas när kopplingen är avstängd. Gmail kan vid oklar nätverkskvittens skicka en dubblett, precis som för påminnelserna.
+
+### Glömt lösenord
+
+På inloggningssidan finns **Glömt lösenord?**. Ett aktivt konto kan få en återställningslänk via den aktiverade e-postkopplingen. Länken gäller i 30 minuter och kan användas en gång. Endast en hash av länktoken sparas i databasen. Ett lyckat lösenordsbyte avslutar kontots alla sessioner och ogiltigförklarar övriga återställningslänkar. Även lösenordsbyte under Mitt konto eller genom admin ogiltigförklarar gamla länkar.
+
+Svaret avslöjar inte om adressen finns. Begäran och bekräftelse begränsas till sammanlagt tio anrop per minut per anslutande IP-adress, och högst tre länkar per konto under 30 minuter. Bakom en proxy kan IP-gränsen delas av flera personer. Om e-post är avstängd eller inte fungerar behöver administratören hjälpa personen via det befintliga lösenordsbytet.
+
+### Information, uppdatering och kalender
+
+**Volontärinformation** är en ny sida för inloggade användare med fält för adress och introduktion. Tillträde och nycklar ingår inte här; dörrkoden hanteras på bokningssidan i den andra upplagan. Rutiner och viktiga instruktioner finns analogt på katthemmet. Admin och superadmin kan fylla i och spara texten. Tomma fält visar att information kommer; inga riktiga uppgifter eller instruktioner har hittats på.
+
+Schemat och Mina bokningar uppdateras var 30:e sekund när fliken är synlig, och när användaren återvänder till fliken. En öppen dialog skyddas från uppdateringen så att formulär inte skrivs över. Schemat har även **Uppdatera nu**.
+
+**Lägg till i kalender** hämtar en ICS-fil för en egen aktiv bokning, med svensk tidszon och regler för sommar- och vintertid. Nedladdningen kräver inloggning och rätt till bokningen. Kalenderfilen är en kopia vid nedladdningstillfället, inte en prenumeration; ändringar i portalen uppdaterar inte automatiskt en redan importerad kalenderpost.
+
+Kontaktvägen vid sena förhinder hanteras i den separata kommande uppdateringen. Ingen närvaroregistrering eller instämpling har lagts till.
+
+### Verifiering
+
+`npm test` kör befintliga integrationstester och nya tester för påfyllning, bevarade ändringar, mejlkö med återförsök, lösenordsåterställning och kalenderformat. Tester använder tillfälliga databaser och simulerad e-post; inga riktiga mejl skickas.
+
+Rollen `admin` visas som **Styrelse** i gränssnittet. Behörigheterna är oförändrade; superadmin är fortsatt en separat roll.
+
+Under introduktionen i Volontärinfo finns en utfällbar manual anpassad efter inloggad roll. Volontärer får boknings- och kontohjälp, styrelsen även stöd för schema och volontärkonton, och superadmin dessutom hjälp med roller och e-postinställningar.
+
+Styrelse/admin och superadmin kan lägga till **Extra information** på vanliga pass, händelser och öppet hus. Fältet är separat från den vanliga passbeskrivningen och syns i schemakortet och passdialogen. Det följer med i nya kalenderfiler och ändringsmejl. Öppna passet och välj Extra information; tom text tar bort tillägget. Öppet hus behåller sina fasta tider.
+
+Överlappande bokningar tillåts efter uttrycklig bekräftelse, exempelvis morgonpass 08–12 och öppet hus 11–15. Detta gäller både egen bokning, bokning åt någon annan och flytt av ett bokat pass. API kräver `confirmOverlap: true` efter varningen. Bekräftelsen för minst sju deltagare är separat och båda kan behövas. Samma person kan fortfarande bara boka samma pass en gång.
+
+Framtida pass inom de närmaste sju dagarna markeras röda i schemat om färre än två är anmälda. Inställda och redan påbörjade pass undantas. Röd markering har företräde framför tidsfärgen och bokningsbakgrunden; texten Du är bokad visar fortfarande egen bokning.
+
+Introduktionsavsnittet har tagits bort från Volontärinfo och redigeringsformuläret i väntan på eventuell checklista för nya volontärer. Adress och rollanpassad portalmanual finns kvar. Ingen checklista är införd.
+
+Under Volontärinfo finns Min första tid på katthemmet: en personlig introduktionschecklista med kryss som sparas automatiskt per inloggat konto i SQLite. Den omfattar trygghet, arbetet inklusive genomgång av sanering, katternas bemötande, portalen och avstämning. Kryss kan tas bort och finns kvar efter utloggning och omstart. Ingen närvaro eller instämpling registreras. Endast användarens egna kryss hämtas och ändras av API.
+
+Introduktionschecklistan döljs i Volontärinfo för grönmarkerade användare, inklusive styrelse och superadmin som alltid är gröna. Detta gäller både manuell och automatisk grönmarkering. Sparade kryss bevaras och visas igen om användaren inte längre är grön. Adress och portalmanual visas fortfarande.

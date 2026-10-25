@@ -1,10 +1,10 @@
 {
   "name": "katthem-bokning",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test.mjs"
+    "test": "node --test test.mjs features.test.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -12,5 +12,5 @@
   "dependencies": {
     "nodemailer": "10.2.1"
   },
-  "displayVersion": "0.2.003"
+  "displayVersion": "0.2.004"
 }
