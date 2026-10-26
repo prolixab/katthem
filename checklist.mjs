@@ -10,7 +10,7 @@ export const checklistGroups=[
   {id:'daily-care',text:'Jag har fått se hur matning, vatten och rengöring går till.'},
   {id:'sanitation',text:'Jag har fått en genomgång av sanering enligt katthemmets rutiner och vet var instruktionerna finns.'},
   {id:'own-tasks',text:'Jag vet vilka uppgifter jag får göra själv och när jag ska fråga.'},
-  {id:'handover',text:'Jag vet hur jag förmedlar viktig information till nästa pass.'}
+  {id:'handover',text:'Jag vet var whiteboardtavlan finns och att överlämning till nästa pass sker på plats med hjälp av tavlan.'}
  ]},
  {title:'Bemöta katterna',items:[
   {id:'approach-cats',text:'Jag har fått vägledning i hur vi närmar oss katterna.'},

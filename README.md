@@ -138,7 +138,7 @@ Svaret avslöjar inte om adressen finns. Begäran och bekräftelse begränsas ti
 
 ### Information, uppdatering och kalender
 
-**Volontärinformation** är en ny sida för inloggade användare med fält för adress och introduktion. Tillträde och nycklar ingår inte här; dörrkoden hanteras på bokningssidan i den andra upplagan. Rutiner och viktiga instruktioner finns analogt på katthemmet. Admin och superadmin kan fylla i och spara texten. Tomma fält visar att information kommer; inga riktiga uppgifter eller instruktioner har hittats på.
+**Praktisk information** är en ny sida för inloggade användare med fält för adress och introduktion. Tillträde och nycklar ingår inte här; dörrkoden hanteras på bokningssidan i den andra upplagan. Rutiner och viktiga instruktioner finns analogt på katthemmet. Admin och superadmin kan fylla i och spara texten. Tomma fält visar att information kommer; inga riktiga uppgifter eller instruktioner har hittats på.
 
 Schemat och Mina bokningar uppdateras var 30:e sekund när fliken är synlig, och när användaren återvänder till fliken. En öppen dialog skyddas från uppdateringen så att formulär inte skrivs över. Schemat har även **Uppdatera nu**.
 
@@ -152,7 +152,7 @@ Kontaktvägen vid sena förhinder hanteras i den separata kommande uppdateringen
 
 Rollen `admin` visas som **Styrelse** i gränssnittet. Behörigheterna är oförändrade; superadmin är fortsatt en separat roll.
 
-Under introduktionen i Volontärinfo finns en utfällbar manual anpassad efter inloggad roll. Volontärer får boknings- och kontohjälp, styrelsen även stöd för schema och volontärkonton, och superadmin dessutom hjälp med roller och e-postinställningar.
+Under introduktionen i Praktisk information finns en utfällbar manual anpassad efter inloggad roll. Volontärer får boknings- och kontohjälp, styrelsen även stöd för schema och volontärkonton, och superadmin dessutom hjälp med roller och e-postinställningar.
 
 Styrelse/admin och superadmin kan lägga till **Extra information** på vanliga pass, händelser och öppet hus. Fältet är separat från den vanliga passbeskrivningen och syns i schemakortet och passdialogen. Det följer med i nya kalenderfiler och ändringsmejl. Öppna passet och välj Extra information; tom text tar bort tillägget. Öppet hus behåller sina fasta tider.
 
@@ -160,11 +160,11 @@ Styrelse/admin och superadmin kan lägga till **Extra information** på vanliga 
 
 Framtida pass inom de närmaste sju dagarna markeras röda i schemat om färre än två är anmälda. Inställda och redan påbörjade pass undantas. Röd markering har företräde framför tidsfärgen och bokningsbakgrunden; texten Du är bokad visar fortfarande egen bokning.
 
-Introduktionsavsnittet har tagits bort från Volontärinfo och redigeringsformuläret i väntan på eventuell checklista för nya volontärer. Adress och rollanpassad portalmanual finns kvar. Ingen checklista är införd.
+Introduktionsavsnittet har tagits bort från Praktisk information och redigeringsformuläret i väntan på eventuell checklista för nya volontärer. Adress och rollanpassad portalmanual finns kvar. Ingen checklista är införd.
 
-Under Volontärinfo finns Min första tid på katthemmet: en personlig introduktionschecklista med kryss som sparas automatiskt per inloggat konto i SQLite. Den omfattar trygghet, arbetet inklusive genomgång av sanering, katternas bemötande, portalen och avstämning. Kryss kan tas bort och finns kvar efter utloggning och omstart. Ingen närvaro eller instämpling registreras. Endast användarens egna kryss hämtas och ändras av API.
+Under Praktisk information finns Min första tid på katthemmet: en personlig introduktionschecklista med kryss som sparas automatiskt per inloggat konto i SQLite. Den omfattar trygghet, arbetet inklusive genomgång av sanering, katternas bemötande, portalen och avstämning. Kryss kan tas bort och finns kvar efter utloggning och omstart. Ingen närvaro eller instämpling registreras. Endast användarens egna kryss hämtas och ändras av API.
 
-Introduktionschecklistan döljs i Volontärinfo för grönmarkerade användare, inklusive styrelse och superadmin som alltid är gröna. Detta gäller både manuell och automatisk grönmarkering. Sparade kryss bevaras och visas igen om användaren inte längre är grön. Adress och portalmanual visas fortfarande.
+Introduktionschecklistan döljs i Praktisk information för grönmarkerade användare, inklusive styrelse och superadmin som alltid är gröna. Detta gäller både manuell och automatisk grönmarkering. Sparade kryss bevaras och visas igen om användaren inte längre är grön. Adress och portalmanual visas fortfarande.
 
 ## Version 0.3.001
 
@@ -173,3 +173,16 @@ Medlemsregistret är tillgängligt för styrelse/admin och superadmin med kontak
 Dörrkod visas vid schemat för inloggade användare; styrelse/admin och superadmin får ändra den. Dagens städning visas i passdialogen, inte på kalenderkortet. Sena avbokningar hänvisas till katthemmets bemanningsgrupp i Messenger, även i påminnelser.
 
 Kattinfo ingår inte i denna version och har sparats separat som lokalt arkiv. Funktioner från 0.2.004–0.2.005, bland annat rullande schema, checklistan, kalenderfiler och ändringsmejl, behålls.
+
+### Personlig kalenderprenumeration
+Under Veckoschema och Mina bokningar finns Prenumerera på mina pass. Länken läggs till som en kalenderprenumeration (inte filimport). Varje aktivt konto har en egen slumpmässig, privat länk som visar dess aktuella bokningar med adress och arbetsuppgifter. Länken kan återkallas i samma dialog; en ny länk skapas nästa gång. Kalenderappen bestämmer hur ofta uppdateringar hämtas. Inaktiverade kontons länkar fungerar inte. Länkar är känsliga och ska inte delas. Lokala länkar fungerar endast på den lokala datorn; externa kalenderappar behöver en publicerad HTTPS-adress via APP_URL.
+
+Kalenderexporter och prenumerationer innehåller en DISPLAY-påminnelse 12 timmar före varje pass (VALARM). Kalenderappen avgör hur importerade påminnelser hanteras. Restid och avresepåminnelser ställs in i kalenderappen; portalen beräknar inte restid. Informationssidan heter Praktisk information.
+
+### Återkommande bokningar och bemanning (0.4.001)
+Öppna ett framtida ordinarie pass och välj Boka återkommande. Välj varje, varannan eller var fjärde vecka och ett slutdatum inom det öppna schemat (högst sex veckor). Förhandsgranska innan bokning. Inställda eller saknade pass hoppas över och redan bokade pass behålls. Överlappningar och minst sju anmälda kräver separat bekräftelse. Hela bokningen sker i en transaktion och kräver ny förhandsgranskning om planen ändrats. Varje pass avbokas separat enligt vanliga regler; serien förlängs inte automatiskt. Styrelsen kan boka åt vald volontär.
+Bemanning visas för admin och superadmin med en lista för kommande 42 dagar: färre än två bokade eller ingen grönmarkerad person. Även veckoschemat visar om en grönmarkerad person är bokad. Detta är planeringsstöd utan bokningsspärr. Rutinerade, manuellt gröna och administratörer räknas. Överlämning sker på whiteboardtavlan på plats, vilket också förklaras i Praktisk information och introduktionschecklistan. Ersättare hanteras i Messenger.
+
+Efter varje automatiskt öppet hus skapas en separat bokningsbar Volontärsträff kl. 15–16. Admin och superadmin kan ändra Information om träffen samt flytta eller ställa in händelsen. Ursprungstillfället sparas så att en flyttad eller inställd träff inte återskapas vid omstart.
+
+Admin och superadmin kan välja Administration → Skapa extra pass. En gång skapar ett enskilt pass. Varje/varannan/var fjärde vecka tillsammans med slutdatum förhandsgranskar en serie (högst ett år). Befintliga pass med samma tid och inställda söndagspass hoppas över. Serien sparas atomärt och varje tillfälle kan sedan hanteras separat. Pass skapas utan att boka volontärer. Befintlig funktion för Extra information används.

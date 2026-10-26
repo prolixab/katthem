@@ -166,30 +166,62 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('volunteer-info','PUT',info,vc)).status,403);
  assert.equal((await call('volunteer-info','PUT',info,newAdminCookie)).status,200);
  assert.deepEqual((await(await call('state','GET',null,vc)).json()).volunteer_info,info);
+ // Monthly meetings follow open house, with editable information and durable cancellation/moves.
+ const meetingState=await(await call('state','GET',null,ac)).json(),meeting=meetingState.slots.find(s=>s.volunteer_meeting&&!s.cancelled);
+ assert.ok(meeting);assert.equal(meeting.start,'15:00');assert.equal(meeting.end,'16:00');assert.equal(meeting.kind,'event');assert.ok(meetingState.slots.some(s=>s.date===meeting.date&&s.kind==='open_house'&&s.end==='15:00'));
+ assert.equal((await call('slots/'+meeting.id,'PATCH',{extra_info:'Nästa träff: välkomna!'},vc)).status,403);
+ assert.equal((await call('slots/'+meeting.id,'PATCH',{extra_info:'Nästa träff: välkomna!'},newAdminCookie)).status,200);
+ assert.equal((await call('slots/'+meeting.id,'PATCH',{extra_info:'Information från superadmin'},ac)).status,200);
+ assert.equal((await call('slots/'+meeting.id,'DELETE',null,newAdminCookie)).status,200);
+ let afterMeeting=await(await call('state','GET',null,vc)).json();assert.equal(afterMeeting.slots.find(s=>s.id===meeting.id).cancelled,1);assert.equal(afterMeeting.slots.filter(s=>s.volunteer_meeting&&s.date===meeting.date).length,1);
+ const movedMeetingDate=new Date(meeting.date+'T12:00:00Z');movedMeetingDate.setUTCDate(movedMeetingDate.getUTCDate()+1);
+ assert.equal((await call('slots/'+meeting.id,'PATCH',{date:movedMeetingDate.toISOString().slice(0,10),start:'15:00',end:'16:00',title:'Volontärsträff',note:'Ny tid'},newAdminCookie)).status,200);
+ afterMeeting=await(await call('state','GET',null,vc)).json();assert.equal(afterMeeting.slots.filter(s=>s.volunteer_meeting).length,meetingState.slots.filter(s=>s.volunteer_meeting).length);assert.ok(!afterMeeting.slots.some(s=>s.volunteer_meeting&&s.date===meeting.date));assert.equal(afterMeeting.slots.find(s=>s.id===meeting.id).extra_info,'Information från superadmin');
  // A calendar download requires ownership (or admin) and a live booking.
  const bookedState=await(await call('state','GET',null,vc)).json(),eventBooking=bookedState.bookings.find(b=>b.slot_id===eventId);
  const calendar=await call('bookings/'+eventBooking.id+'/calendar','GET',null,vc);assert.equal(calendar.status,200);assert.match(calendar.headers.get('content-type'),/text\/calendar/);assert.match(await calendar.text(),/TZID=Europe\/Stockholm/);
  assert.equal((await call('bookings/'+eventBooking.id+'/calendar')).status,401);
  const otherLogin=await call('login','POST',{email:'test@example.se',password:'password12345'}),otherCookie=otherLogin.headers.get('set-cookie').split(';')[0];
  assert.equal((await call('bookings/'+eventBooking.id+'/calendar','GET',null,otherCookie)).status,403);
+ const eventSlot=bookedState.slots.find(s=>s.id===eventId),weekStart=new Date(eventSlot.date+'T12:00:00Z');weekStart.setUTCDate(weekStart.getUTCDate()-(weekStart.getUTCDay()+6)%7);
+ const weekPath='calendar/week?start='+weekStart.toISOString().slice(0,10);
+ const weekResponse=await call(weekPath,'GET',null,vc);assert.equal(weekResponse.status,200);const weekIcs=(await weekResponse.text()).replace(/\r\n /g,'');
+ const weekEnd=new Date(weekStart);weekEnd.setUTCDate(weekEnd.getUTCDate()+6);
+ const expected=bookedState.slots.filter(s=>s.mine&&!s.cancelled&&s.date>=weekStart.toISOString().slice(0,10)&&s.date<=weekEnd.toISOString().slice(0,10));
+ assert.equal(weekIcs.split('BEGIN:VEVENT').length-1,expected.length);for(const slot of expected)assert.ok(weekIcs.includes('UID:katthem-slot-'+slot.id+'@'));assert.match(weekIcs,/LOCATION:Testadress 1/);
+ assert.equal((await call(weekPath)).status,401);assert.equal((await call('calendar/week?start=2030-02-30','GET',null,vc)).status,400);assert.equal((await call('calendar/week?start=2000-01-03','GET',null,vc)).status,404);
  // The reset endpoints can be used without a session, and never expose account existence.
  const generic=await(await call('password-reset/request','POST',{email:'unknown@example.se'})).json();
  assert.deepEqual(await(await call('password-reset/request','POST',{email:'test@example.se'})).json(),generic);
  assert.equal((await call('password-reset/confirm','POST',{token:'invalid',password:'NewPassword123'})).status,400);
+ // Subscription URLs work without cookies, remain private per user and reflect live bookings.
+ assert.equal((await call('calendar/subscription','POST')).status,401);
+ const subscription=await(await call('calendar/subscription','POST',{},vc)).json();
+ const feedPath=new URL(subscription.url).pathname;assert.match(feedPath,/^\/calendar\/[a-f0-9]{64}\.ics$/);
+ assert.equal((await(await call('calendar/subscription','POST',{},vc)).json()).url,subscription.url);
+ const otherSubscription=await(await call('calendar/subscription','POST',{},otherCookie)).json();assert.notEqual(otherSubscription.url,subscription.url);
+ const feed=()=>fetch(base+feedPath);const initialFeed=await feed();assert.equal(initialFeed.status,200);assert.equal(initialFeed.headers.get('cache-control'),'no-store');assert.match(await initialFeed.text(),/LOCATION:Testadress 1/);
+ assert.equal((await fetch(base+'/calendar/'+ '0'.repeat(64)+'.ics')).status,404);
  // Standard shifts support the same editing and cancellation flow as events.
  const standardResponse=await call('slots','POST',{date:'2099-04-20',start:'08:00',end:'12:00',title:'Redigerbart pass',note:'Före',extra_info:'Volontärsträff'},ac);
  const standard=(await standardResponse.json()).slots.find(s=>s.title==='Redigerbart pass');
  assert.equal((await call('bookings','POST',{slotId:standard.id},vc)).status,200);
- assert.equal(standard.extra_info,'Volontärsträff');
+ assert.equal(standard.extra_info,'Volontärsträff');assert.ok((await(await feed()).text()).includes('UID:katthem-slot-'+standard.id+'@'));
  const beforeStandard=await(await call('state','GET',null,vc)).json(),standardBooking=beforeStandard.bookings.find(b=>b.slot_id===standard.id);
  const update={date:'2099-04-21',start:'08:00',end:'11:00',title:'Ändrat pass',note:'Efter'};
  assert.equal((await call('slots/'+standard.id,'PATCH',update,vc)).status,403);
  const updated=await(await call('slots/'+standard.id,'PATCH',update,ac)).json();assert.equal(updated.slots.find(s=>s.id===standard.id).end,'11:00');assert.equal(updated.slots.find(s=>s.id===standard.id).extra_info,'Volontärsträff');assert.ok(updated.bookings.some(b=>b.id===standardBooking.id));
+ assert.ok((await(await feed()).text()).includes('SUMMARY:Katthemmet - Ändrat pass'));
  const cancelled=await(await call('slots/'+standard.id,'DELETE',null,ac)).json();assert.equal(cancelled.slots.find(s=>s.id===standard.id).cancelled,1);assert.ok(cancelled.bookings.some(b=>b.id===standardBooking.id));
+ assert.ok(!(await(await feed()).text()).includes('UID:katthem-slot-'+standard.id+'@'));
  assert.equal((await call('bookings/'+standardBooking.id+'/calendar','GET',null,vc)).status,409);
  assert.equal((await call('bookings','POST',{slotId:standard.id},vc)).status,409);
  assert.equal((await call('slots/'+standard.id,'PATCH',update,ac)).status,200);
  assert.ok((await(await call('state','GET',null,ac)).json()).change_notifications.pending>=2);
+ assert.equal((await call('calendar/subscription','DELETE',null,vc)).status,200);assert.equal((await feed()).status,404);
+ const replacement=await(await call('calendar/subscription','POST',{},vc)).json();assert.notEqual(replacement.url,subscription.url);
+ assert.equal((await call('users/'+uid,'PATCH',{active:0},ac)).status,200);assert.equal((await fetch(base+new URL(otherSubscription.url).pathname)).status,404);assert.equal((await call('users/'+uid,'PATCH',{active:1},ac)).status,200);
+
  const beforeEvent=await(await call('state','GET',null,ac)).json(),eventBookings=beforeEvent.bookings.filter(b=>b.slot_id===eventId).map(b=>b.id);
  const otherResponse=await call('slots','POST',{...eventPayload,date:'2099-04-11',title:'Annat besök'},ac);const otherId=(await otherResponse.json()).slots.find(s=>s.title==='Annat besök').id;assert.equal((await call('bookings','POST',{slotId:otherId},vc)).status,200);
  assert.equal((await call('slots/'+eventId,'PATCH',{...eventPayload,date:'2099-04-11'},ac)).status,409);
@@ -215,6 +247,26 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  }
  const seeded=(await(await call('state','GET',null,ac)).json()).slots.filter(x=>x.date!==firstSunday&&x.date!==laterSunday&&x.title!=='Testpass');
  for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='18:00')assert.equal(item.title,'Socialiseringsgruppen');if(Number(item.date.slice(-2))<=7&&item.start==='16:00'){assert.equal(item.cancelled,1);assert.equal((await call('bookings','POST',{slotId:item.id},vc)).status,409)}}}
+ // Recurring booking API only allows booking for self unless actor is admin.
+ const seriesPayload={date:'2098-06-03',start:'06:00',end:'07:00',title:'Serietest',kind:'regular'};
+ const seriesFirst=(await(await call('slots','POST',seriesPayload,ac)).json()).slots.find(s=>s.title==='Serietest');
+ const seriesSecond=(await(await call('slots','POST',{...seriesPayload,date:'2098-06-10',title:'Serietest 2'},ac)).json()).slots.find(s=>s.title==='Serietest 2');
+ const seriesRequest={slotId:seriesFirst.id,interval:1,until:'2098-06-10',userId:uid};
+ assert.equal((await call('bookings/recurring','POST',{...seriesRequest,preview:true})).status,401);
+ const seriesPlan=await(await call('bookings/recurring','POST',{...seriesRequest,preview:true},vc)).json();assert.equal(seriesPlan.rows.length,2);
+ const seriesSaved=await call('bookings/recurring','POST',{...seriesRequest,key:seriesPlan.key},vc);assert.equal(seriesSaved.status,200);const seriesState=await seriesSaved.json();
+ assert.ok(seriesState.bookings.some(b=>b.slot_id===seriesSecond.id&&b.user_id===seriesState.user.id));assert.ok(!seriesState.bookings.some(b=>b.slot_id===seriesSecond.id&&b.user_id===uid));assert.equal(seriesState.slots.find(s=>s.id===seriesFirst.id).green_booked,0);
+ assert.equal((await call('bookings','POST',{slotId:seriesFirst.id},ac)).status,200);const greenState=await(await call('state','GET',null,vc)).json();assert.equal(greenState.slots.find(s=>s.id===seriesFirst.id).green_booked,1);assert.deepEqual(greenState.users,[]);
+ // Admins and superadmins create recurring extra slots; volunteers cannot.
+ const extraSeries={date:'2097-01-06',start:'13:15',end:'14:15',title:'Extra serie',note:'Gemensamt arbete',extra_info:'Ta med frågor',interval:1,until:'2097-01-20'};
+ assert.equal((await call('slots/series','POST',{...extraSeries,preview:true},vc)).status,403);
+ assert.equal((await call('slots/series','POST',{...extraSeries,preview:true,until:'2100-01-01'},ac)).status,400);
+ const extraPlan=await(await call('slots/series','POST',{...extraSeries,preview:true},newAdminCookie)).json();assert.equal(extraPlan.rows.filter(r=>r.status==='new').length,3);
+ assert.equal((await call('slots/series','POST',{...extraSeries,key:extraPlan.key},ac)).status,200);
+ const extraState=await(await call('state','GET',null,vc)).json(),createdExtras=extraState.slots.filter(s=>s.title==='Extra serie');assert.equal(createdExtras.length,3);assert.ok(createdExtras.every(s=>s.extra_info==='Ta med frågor'&&s.booked===0));
+ assert.equal((await(await call('slots/series','POST',{...extraSeries,preview:true},ac)).json()).rows.filter(r=>r.status==='new').length,0);
+ assert.equal((await call('slots/series','POST',{...extraSeries,key:extraPlan.key},newAdminCookie)).status,409);
+ const sundaySeries=await(await call('slots/series','POST',{...extraSeries,date:firstSunday,until:firstSunday,start:'16:00',end:'18:00',preview:true},ac)).json();assert.equal(sundaySeries.rows[0].status,'cancelled');
  const csv=await call('export','GET',null,ac);assert.match(await csv.text(),/Testpass/);
  await stop();
  const legacy=new DatabaseSync(path.join(dir,'katthem.sqlite'));const originalHash=legacy.prepare('SELECT password FROM users WHERE email=?').get('admin@katthem.local').password;const danielId=Number(legacy.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,'admin',?)").run('Daniel','daniel@staahlis.se',originalHash,Date.now()).lastInsertRowid);legacy.prepare('INSERT INTO sessions VALUES(?,?,?)').run('old-daniel-session',danielId,Date.now()+86400000);legacy.prepare('DELETE FROM migrations WHERE name=?').run('superadmin-daniel-20261024');legacy.exec("ALTER TABLE slots DROP COLUMN cancelled; UPDATE slots SET capacity=2; UPDATE slots SET title='Kvällspass' WHERE start='18:00';" );legacy.close();
@@ -295,6 +347,11 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
 
  fixture.user.role='admin';vm.runInContext("view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Skapa händelse/);assert.match(elements.get('#app').innerHTML,/Byt lösenord/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-role-user=/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-action="new-admin"/);assert.doesNotMatch(elements.get('#app').innerHTML,/id="email-settings"/);
  vm.runInContext('newUser()',context);assert.doesNotMatch(elements.get('#modal').innerHTML,/option value="admin"/);
+ for(const role of ['admin','superadmin','volunteer']){fixture.user.role=role;const guide=vm.runInContext('registrationGuide()',context);if(role==='volunteer')assert.equal(guide,'');else{assert.match(guide,/namn;e-post;lösenord;grön/);assert.match(guide,/Medlemsnummer;Medlem sedan/);assert.match(guide,/ännu ingen CSV-import/)}}fixture.user.role='admin';
+ vm.runInContext("view='staffing';render()",context);assert.match(elements.get('#app').innerHTML,/Kommande 42 dagar/);assert.match(elements.get('#app').innerHTML,/Saknar grönmarkerad person/);assert.match(elements.get('#app').innerHTML,/data-view="staffing"/);
+ vm.runInContext("recurringForm(5)",context);assert.match(elements.get('#modal').innerHTML,/Varannan vecka/);assert.match(elements.get('#modal').innerHTML,/Förhandsgranska/);
+ assert.equal(vm.runInContext("experienceLabel({green_booked:1})",context),'✓ Grönmarkerad person bokad');
+ vm.runInContext('newSlot()',context);assert.match(elements.get('#modal').innerHTML,/Skapa extra pass/);assert.match(elements.get('#modal').innerHTML,/slot-repeat/);assert.match(elements.get('#modal').innerHTML,/Varannan vecka/);
  // Manuals follow the signed-in role, including the shared introduction page.
  vm.runInContext("view='info';render()",context);
  assert.match(elements.get('#app').innerHTML,/Manual för styrelsen/);
