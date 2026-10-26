@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {createMembers} from './members.mjs';
 import {isAdmin,isSuperAdmin,canManageAccount,isGreen} from './roles.mjs';
 import {upgradeDefaultShifts} from './schedule-upgrade.mjs';
 import {createEmailSettings} from './email-settings.mjs';
@@ -72,6 +73,13 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const ordinaryVolunteer=(await(await call('state','GET',null,ac)).json()).users.find(u=>u.email==='admin-volunteer@example.se');
  assert.equal((await call('users/'+ordinaryVolunteer.id+'/password','POST',{password:'NewVolunteer12345'},newAdminCookie)).status,200);
  assert.equal((await call('users/'+ordinaryVolunteer.id,'PATCH',{active:0},newAdminCookie)).status,200);
+ const initialDoor=(await(await call('state','GET',null,ac)).json()).door_code;assert.equal(initialDoor.code,'');
+ assert.equal((await call('door-code','PUT',{code:'0012#',revision:0},vc)).status,403);assert.equal((await call('door-code','PUT',{code:'0012#',revision:0})).status,401);
+ const door=await call('door-code','PUT',{code:'0012#',revision:initialDoor.revision},newAdminCookie);assert.equal(door.status,200);assert.equal((await door.json()).door_code.code,'0012#');assert.equal((await(await call('state','GET',null,vc)).json()).door_code.code,'0012#');assert.equal((await call('door-code','PUT',{code:'stale',revision:0},ac)).status,409);
+ const memberPayload={name:'Publiceringstest',email:'member@example.se',phone:'0701234567',address:'Testgatan',member_number:'M001',member_since:'2026-01-01',status:'active',board_role:'secretary',board_title:'',responsibilities:'Inköp',note:'Test'};
+ const memberResponse=await call('members','POST',memberPayload,newAdminCookie);assert.equal(memberResponse.status,200);const member=(await memberResponse.json()).members[0];assert.equal(member.board_role,'secretary');
+ assert.equal((await call('members','POST',memberPayload,vc)).status,403);const restricted=await(await call('state','GET',null,vc)).json();assert.equal(restricted.members_enabled,false);assert.ok(!('members' in restricted));
+ const changedMember=await call('members/'+member.id,'PUT',{...memberPayload,status:'paused',revision:member.revision},ac);assert.equal(changedMember.status,200);assert.equal((await changedMember.json()).members[0].status,'paused');assert.equal((await call('members/'+member.id,'PUT',{...memberPayload,revision:0},newAdminCookie)).status,409);
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
@@ -363,3 +371,39 @@ test('Roller: admin och superadmin delar verksamhetsbehörighet men kontoskydd s
 });
 
 test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},15),false);assert.equal(isGreen({role:'volunteer'},16),true)});
+
+test('Medlemmar: profiler, status, styrelseansvar, unika medlemsnummer och samtidighet',()=>{
+ const db=new DatabaseSync(':memory:');try{
+ const members=createMembers(db),data={name:'Testmedlem',email:'member@example.se',phone:'0701234567',address:'Testgatan 1',member_number:'M001',member_since:'2026-01-01',status:'active',board_role:'chair',board_title:'',responsibilities:'Inköp och volontärsamordning',note:'Övrig information'};
+ const id=members.save(null,data);assert.equal(members.list()[0].board_role,'chair');assert.equal(members.list()[0].responsibilities,'Inköp och volontärsamordning');
+ members.save(id,{...data,status:'supporting',board_role:'other',board_title:'Arbetsgruppsledare',revision:0});assert.equal(members.list()[0].status,'supporting');assert.equal(members.list()[0].board_title,'Arbetsgruppsledare');
+ assert.throws(()=>members.save(id,{...data,revision:0}),error=>error.status===409);assert.throws(()=>members.save(null,data),/Medlemsnumret används/);
+ for(const change of [{name:''},{email:'invalid'},{member_since:'2026-02-30'},{member_since:'2026-99-99'},{status:'admin'},{board_role:'other',board_title:''}])assert.throws(()=>members.save(null,{...data,member_number:'',...change}),error=>error.status===400);
+ assert.throws(()=>members.save(999,{...data,revision:0}),error=>error.status===404);
+ }finally{db.close()}
+});
+
+test('Medlemssidan: profiler och styrelseroll visas lokalt för admin',()=>{
+ const elements=new Map(),element=()=>({innerHTML:'',style:{},querySelectorAll:()=>[],querySelector:()=>({}),showModal(){this.open=true},close(){this.open=false}});
+ const document={addEventListener(){},querySelector(selector){if(['#password-form','#send-reminders','#email-settings'].includes(selector))return null;if(!elements.has(selector))elements.set(selector,element());return elements.get(selector)}};
+ const fixture={user:{id:1,name:'Admin',email:'admin@example.se',role:'admin'},users:[],slots:[],bookings:[],members_enabled:true,members:[{id:1,name:'Testmedlem',email:'member@example.se',phone:'0701234567',address:'Testgatan 1',member_number:'M001',member_since:'2026-01-01',status:'active',board_role:'secretary',board_title:'',responsibilities:'Inköp <test>',note:'Test',updated_at:Date.now(),revision:0}]};
+ const context=vm.createContext({document,Date,setTimeout,setInterval:()=>0,URLSearchParams,window:{location:{hash:''},addEventListener(){},scrollTo(){},scrollY:0},fixture,fetch:()=>new Promise(()=>{}),FormData:class{}});vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);vm.runInContext("state=fixture;view='members';render()",context);
+ assert.match(elements.get('#app').innerHTML,/data-view="members"/);assert.match(elements.get('#app').innerHTML,/Sekreterare/);assert.match(elements.get('#app').innerHTML,/Inköp &lt;test&gt;/);
+ vm.runInContext('memberProfile(1)',context);assert.match(elements.get('#modal').innerHTML,/Testgatan 1/);assert.match(elements.get('#modal').innerHTML,/Medlemsnummer/);
+ vm.runInContext('memberForm(1)',context);assert.match(elements.get('#modal').innerHTML,/Medlemsstatus/);assert.match(elements.get('#modal').innerHTML,/Ytterligare ansvarsområden/);
+ fixture.members_enabled=false;vm.runInContext("view='schedule';render()",context);assert.doesNotMatch(elements.get('#app').innerHTML,/data-view="members"/);
+});
+
+test('Städschema: rätt uppgift per veckodag och gemensamma uppgifter på alla pass',()=>{
+ const element=()=>({innerHTML:'',style:{}}),document={addEventListener(){},querySelector:()=>element()};const context=vm.createContext({document,Date,setTimeout,setInterval:()=>0,URLSearchParams,window:{location:{hash:''},addEventListener(){},scrollTo(){},scrollY:0},fetch:()=>new Promise(()=>{})});vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);
+ const expected=['rum 1 och 2','rum 4 och 5','entrén, tvättrum/toalett och städskrubbar','kontoret, valvet, gången genom katthemmet samt omklädningsrum','rum 6','rum 3 och 7','köket och se över karantänen'];
+ for(let day=0;day<7;day++){const date='2026-10-'+String(26+day).padStart(2,'0');const actualDate=day<6?date:'2026-11-01';const task=vm.runInContext('cleaningInfo('+JSON.stringify(actualDate)+')',context);assert.ok(task.weekly.includes(expected[day]));assert.equal(task.daily,'Se över om något behöver städas. Töm återvinningen.');assert.match(vm.runInContext('cleaningNote('+JSON.stringify(actualDate)+')',context),/Dagens städning/)}
+});
+
+test('Dörrkod: inloggade ser koden, endast admin och superadmin ser redigering',()=>{
+ const elements=new Map(),element=()=>({innerHTML:'',style:{}}),document={addEventListener(){},querySelector(s){if(!elements.has(s))elements.set(s,element());return elements.get(s)}};
+ const context=vm.createContext({document,Date,setTimeout,setInterval:()=>0,URLSearchParams,window:{location:{hash:''},addEventListener(){},scrollTo(){},scrollY:0},fetch:()=>new Promise(()=>{})});vm.runInContext(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),context);
+ for(const role of ['volunteer','admin','superadmin']){context.fixture={user:{role},door_code:{code:'0042#<test>',revision:0}};vm.runInContext('state=fixture',context);const html=vm.runInContext('doorCodePanel()',context);assert.match(html,/0042#&lt;test&gt;/);assert.equal(html.includes('id="edit-door-code"'),role!=='volunteer')}
+});
+
+test('Publicering: Kattinfo saknas, medlemmar och städning finns utan kalendertext',()=>{const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8');assert.doesNotMatch(source,/function kattinfoPage|kattinfo_enabled|0\.x\.001|LOKALT FÖRSLAG/);assert.match(source,/function membersPage/);assert.doesNotMatch(source,/<h3>\$\{esc\(s.title\)\}<\/h3>\$\{cleaningNote/);assert.match(source,/bemanningsgrupp i Messenger/);assert.doesNotMatch(source,/Kontakta administratören/)});

@@ -4,6 +4,7 @@ import {createNotifications} from './notifications.mjs';
 import {createPasswordReset} from './password-reset.mjs';
 import {calendarEvent} from './calendar.mjs';
 import http from 'node:http';
+import {createMembers} from './members.mjs';
 import { isAdmin,isSuperAdmin,canManageAccount,isGreen } from './roles.mjs';
 import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
 import { createEmailSettings } from './email-settings.mjs';
@@ -29,6 +30,8 @@ if(!process.env.DATA_DIR&&dataDir!==path.join(root,'data')&&!existsSync(path.joi
 mkdirSync(dataDir,{recursive:true});
 const db=new DatabaseSync(path.join(dataDir,'katthem.sqlite'));
 db.exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'volunteer',active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS slots(id INTEGER PRIMARY KEY,date TEXT NOT NULL,start TEXT NOT NULL,end TEXT NOT NULL,title TEXT NOT NULL,capacity INTEGER NOT NULL,note TEXT NOT NULL DEFAULT ''); CREATE TABLE IF NOT EXISTS bookings(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),slot_id INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,UNIQUE(user_id,slot_id)); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),expires INTEGER);`);
+const members=createMembers(db);
+db.exec("CREATE TABLE IF NOT EXISTS door_access(id INTEGER PRIMARY KEY CHECK(id=1),code TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);INSERT OR IGNORE INTO door_access(id) VALUES(1);");
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='green_manual'))db.exec('ALTER TABLE users ADD COLUMN green_manual INTEGER NOT NULL DEFAULT 0');
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='created_at')){
  db.exec('ALTER TABLE users ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0');db.prepare('UPDATE users SET created_at=?').run(Date.now());
@@ -120,7 +123,7 @@ function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.i
 function snapshot(user){
  ensureOpenHouse();schedule.ensure();
  const counts=completedCounts(isAdmin(user)?undefined:user.id);
- return {checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:db.prepare('SELECT location FROM volunteer_info WHERE id=1').get(),change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ return {members_enabled:isAdmin(user),members:isAdmin(user)?members.list():undefined,door_code:db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get(),checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:db.prepare('SELECT location FROM volunteer_info WHERE id=1').get(),change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -179,7 +182,7 @@ const server=http.createServer(async(req,res)=>{
  }catch(e){db.exec('ROLLBACK');throw e}return send(snapshot(user));}
  if(url.pathname.startsWith('/api/bookings/')&&req.method==='DELETE'){
  const b=db.prepare('SELECT b.*,s.date,s.start FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.id=?').get(Number(url.pathname.split('/').pop()));if(!b)fail('Bokningen finns inte.',404);
- if(!isAdmin(user)){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta administratören.');}
+ if(!isAdmin(user)){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta katthemmets bemanningsgrupp i Messenger.');}
  db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);return send(snapshot(user));}
  if(/^\/api\/bookings\/\d+\/calendar$/.test(url.pathname)&&req.method==='GET'){
   const booking=db.prepare('SELECT b.user_id,s.* FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.id=?').get(Number(url.pathname.split('/')[3]));
@@ -194,6 +197,13 @@ const server=http.createServer(async(req,res)=>{
   return send({item_id:p.item_id,checked:p.checked});
  }
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(url.pathname==='/api/door-code'&&req.method==='PUT'){
+  const p=await body(req);if(!p||typeof p.code!=='string'||p.code.length>80||/[\r\n\0]/.test(p.code)||!Number.isInteger(p.revision))fail('Ange en dörrkod med högst 80 tecken och ladda om vid behov.');
+  const result=db.prepare('UPDATE door_access SET code=?,revision=revision+1,updated_at=? WHERE id=1 AND revision=?').run(p.code.trim(),Date.now(),p.revision);
+  if(!result.changes)fail('Dörrkoden har ändrats av någon annan. Ladda om sidan innan du sparar.',409);return send(snapshot(user));
+ }
+ if((url.pathname==='/api/members'&&req.method==='POST')||(/^\/api\/members\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);members.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p);return send(snapshot(user))}
+
  if(url.pathname==='/api/volunteer-info'&&req.method==='PUT'){
   const p=await body(req),fields=['location'];
   if(fields.some(k=>typeof p?.[k]!=='string'||p[k].length>4000))fail('Varje informationsfält får innehålla högst 4000 tecken.');

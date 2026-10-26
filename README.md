@@ -165,3 +165,11 @@ Introduktionsavsnittet har tagits bort från Volontärinfo och redigeringsformul
 Under Volontärinfo finns Min första tid på katthemmet: en personlig introduktionschecklista med kryss som sparas automatiskt per inloggat konto i SQLite. Den omfattar trygghet, arbetet inklusive genomgång av sanering, katternas bemötande, portalen och avstämning. Kryss kan tas bort och finns kvar efter utloggning och omstart. Ingen närvaro eller instämpling registreras. Endast användarens egna kryss hämtas och ändras av API.
 
 Introduktionschecklistan döljs i Volontärinfo för grönmarkerade användare, inklusive styrelse och superadmin som alltid är gröna. Detta gäller både manuell och automatisk grönmarkering. Sparade kryss bevaras och visas igen om användaren inte längre är grön. Adress och portalmanual visas fortfarande.
+
+## Version 0.3.001
+
+Medlemsregistret är tillgängligt för styrelse/admin och superadmin med kontaktuppgifter, medlemsstatus, styrelseroll och övriga ansvarsområden. Medlemsprofiler är separata från inloggningskonton. Endast dessa roller får läsa och ändra profilerna.
+
+Dörrkod visas vid schemat för inloggade användare; styrelse/admin och superadmin får ändra den. Dagens städning visas i passdialogen, inte på kalenderkortet. Sena avbokningar hänvisas till katthemmets bemanningsgrupp i Messenger, även i påminnelser.
+
+Kattinfo ingår inte i denna version och har sparats separat som lokalt arkiv. Funktioner från 0.2.004–0.2.005, bland annat rullande schema, checklistan, kalenderfiler och ändringsmejl, behålls.
