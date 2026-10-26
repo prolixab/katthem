@@ -99,7 +99,7 @@ Sparade Gmail-inställningar ersätter Resend-konfigurationen. Avmarkera aktiver
 
 Versionsnumret visas längst ner på sidan. Paketversionen använder standardformatet 0.2.1, som visas som 0.2.001.
 
-Admin kan sätta ett nytt lösenord för ett annat konto via Administration → Volontärer & administratörer → Byt lösenord. Lösenordet kräver 10–200 tecken och bekräftelse i formuläret. Kontots samtliga sessioner avslutas när det sparas. Ingen e-post skickas; lämna det nya lösenordet direkt till personen. Eget lösenord ändras under Mitt konto.
+Admin kan sätta ett nytt lösenord för ett annat konto via Medlemmar → Volontärer & styrelse → Byt lösenord. Lösenordet kräver 10–200 tecken och bekräftelse i formuläret. Kontots samtliga sessioner avslutas när det sparas. Ingen e-post skickas; lämna det nya lösenordet direkt till personen. Eget lösenord ändras under Mitt konto.
 
 ## Version 0.2.002 – uppgradering av befintligt schema
 
@@ -168,7 +168,7 @@ Introduktionschecklistan döljs i Praktisk information för grönmarkerade anvä
 
 ## Version 0.3.001
 
-Medlemsregistret är tillgängligt för styrelse/admin och superadmin med kontaktuppgifter, medlemsstatus, styrelseroll och övriga ansvarsområden. Medlemsprofiler är separata från inloggningskonton. Endast dessa roller får läsa och ändra profilerna.
+Medlemsregistret är tillgängligt för styrelse/admin och superadmin med kontaktuppgifter, medlemsstatus, styrelseroll och övriga ansvarsområden. Medlemsprofiler kopplas till inloggningskonton via användar-id. Medlemmar kan även finnas utan konto. Endast dessa roller får läsa och ändra profilerna.
 
 Dörrkod visas vid schemat för inloggade användare; styrelse/admin och superadmin får ändra den. Dagens städning visas i passdialogen, inte på kalenderkortet. Sena avbokningar hänvisas till katthemmets bemanningsgrupp i Messenger, även i påminnelser.
 
@@ -188,3 +188,10 @@ Efter varje automatiskt öppet hus skapas en separat bokningsbar Volontärsträf
 Admin och superadmin kan välja Administration → Skapa extra pass. En gång skapar ett enskilt pass. Varje/varannan/var fjärde vecka tillsammans med slutdatum förhandsgranskar en serie (högst ett år). Befintliga pass med samma tid och inställda söndagspass hoppas över. Serien sparas atomärt och varje tillfälle kan sedan hanteras separat. Pass skapas utan att boka volontärer. Befintlig funktion för Extra information används.
 
 Bemanning visar närmaste sju kalenderdagarna (idag och sex dagar framåt), med passerade pass bortfiltrerade och avdelare med veckonummer vid ny vecka. Administration har fällbara sektioner för skapande, CSV, uppföljning, e-post, händelser, konton och exporthjälp. Öppna sektioner bevaras vid automatisk uppdatering under samma sidbesök.
+
+### Samlat medlemsregister och volontärkonton (0.5.001)
+Medlemmar samlar nu både profiler och kontohantering. Varje konto får en profil, eller kopplas till en befintlig profil med samma unika e-post. Kopplingen lagras med användar-id och behålls vid ändrad e-post. Medlemsuppgifter såsom telefon, medlemsnummer, styrelseroll och ansvar bevaras. Om flera profiler har samma e-post krävs manuellt val i medlemsformuläret. En medlem kan finnas utan konto; Skapa volontärkonto på profilen kopplar ett nytt konto direkt till just den profilen även om den tidigare saknat e-post. Namn och e-post synkas, medan bokningar och behörigheter behålls på kontot. Admin får inte ändra administratörers kontouppgifter via medlemsformuläret.
+Födelsedatum är frivilligt och bara synligt för admin/superadmin tillsammans med övriga medlemsuppgifter. Administration visar födelsedagar idag och innevarande vecka (måndag–söndag), även över årsskifte; avslutade medlemskap utesluts. 29 februari visas den 29 februari under skottår. Kontoåtgärder har flyttats från Administration till Medlemmar; uppföljning av frånvaro ligger kvar. Samla in uppgifter ligger efter manualen i Praktisk information.
+
+### Volontärer och medlemsmarkering (0.5.002)
+Sidan heter Volontärer. Alla profiler är volontärprofiler; medlemskap i föreningen anges separat med Är medlem i föreningen. Befintliga profiler med medlemsnummer, medlemsdatum, stödmedlemsstatus eller styrelseroll behåller medlemsmarkering vid uppgraderingen. Kontorollen Admin är skild från styrelserollen i profilen. Överst finns en gemensam fällbar lista för Styrelse och administratörer, med styrelsen först och övriga admins därefter. Alla inloggade volontärer ser namn och roll, men inga kontaktuppgifter, födelsedatum, medlemsmarkeringar eller privata anteckningar. Endast admin och superadmin får den separata volontärslistan med sökning och filter för medlemskap, grönmarkering och kontostatus. Kontoåtgärder ligger på respektive volontärkort.
