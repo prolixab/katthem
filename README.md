@@ -186,3 +186,5 @@ Bemanning visas för admin och superadmin med en lista för kommande 42 dagar: f
 Efter varje automatiskt öppet hus skapas en separat bokningsbar Volontärsträff kl. 15–16. Admin och superadmin kan ändra Information om träffen samt flytta eller ställa in händelsen. Ursprungstillfället sparas så att en flyttad eller inställd träff inte återskapas vid omstart.
 
 Admin och superadmin kan välja Administration → Skapa extra pass. En gång skapar ett enskilt pass. Varje/varannan/var fjärde vecka tillsammans med slutdatum förhandsgranskar en serie (högst ett år). Befintliga pass med samma tid och inställda söndagspass hoppas över. Serien sparas atomärt och varje tillfälle kan sedan hanteras separat. Pass skapas utan att boka volontärer. Befintlig funktion för Extra information används.
+
+Bemanning visar närmaste sju kalenderdagarna (idag och sex dagar framåt), med passerade pass bortfiltrerade och avdelare med veckonummer vid ny vecka. Administration har fällbara sektioner för skapande, CSV, uppföljning, e-post, händelser, konton och exporthjälp. Öppna sektioner bevaras vid automatisk uppdatering under samma sidbesök.

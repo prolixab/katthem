@@ -33,3 +33,5 @@
 .experience-status{display:block;font-size:11px;font-weight:600;margin:0 0 10px}.has-experience{color:#34633b}.needs-experience{color:#86551e}
 
 .series-preview{max-height:45vh;overflow:auto}
+
+.admin-section{margin:16px 0;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}.admin-section>summary{cursor:pointer;padding:18px 22px;font-size:18px;font-weight:600}.admin-section>summary:hover{background:#edf2e7}.admin-section[open]>summary{border-bottom:1px solid var(--line)}.admin-section-body{padding:18px 22px}.staffing-week-divider{padding:15px 0 12px;margin-top:24px;border-top:3px solid var(--green);color:var(--green)}.staffing-week-divider:first-child{margin-top:0}
