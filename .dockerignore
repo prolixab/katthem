@@ -12,3 +12,8 @@
 !email-settings.mjs
 !schedule-upgrade.mjs
 !roles.mjs
+!schedule.mjs
+!notifications.mjs
+!password-reset.mjs
+!calendar.mjs
+!checklist.mjs

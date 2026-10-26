@@ -67,3 +67,10 @@ test('Kalender: svensk tidszon, stabil identitet, escaping och UTF-8-radbrytning
  for(const line of ics.split('\r\n'))assert.ok(Buffer.byteLength(line)<=75);
  assert.match(ics.replace(/\r\n /g,''),/Å{100}\\nRad två/);
 });
+
+
+import {readFileSync} from 'node:fs';
+test('Docker: alla servermoduler som kopieras inkluderas i byggkontexten',()=>{
+ const docker=readFileSync(new URL('./Dockerfile',import.meta.url),'utf8'),ignore=readFileSync(new URL('./.dockerignore',import.meta.url),'utf8').split(/\r?\n/);
+ const copied=docker.split(/\r?\n/).filter(line=>line.startsWith('COPY ')).flatMap(line=>line.split(/\s+/)).filter(token=>token.endsWith('.mjs'));assert.ok(copied.length>0);for(const file of copied)assert.ok(ignore.includes('!'+file),'Saknas i .dockerignore: '+file);
+});
