@@ -9,7 +9,7 @@ WORKDIR /app
 RUN mkdir -p /app/data && chown node:node /app/data
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY --chown=node:node server.mjs csv-import.mjs activity.mjs reminders.mjs email-settings.mjs schedule-upgrade.mjs roles.mjs schedule.mjs notifications.mjs password-reset.mjs calendar.mjs recurring.mjs checklist.mjs members.mjs ./
+COPY --chown=node:node server.mjs csv-import.mjs activity.mjs reminders.mjs email-settings.mjs schedule-upgrade.mjs roles.mjs schedule.mjs notifications.mjs password-reset.mjs calendar.mjs news.mjs recurring.mjs checklist.mjs members.mjs ./
 COPY --chown=node:node public ./public
 USER node
 EXPOSE 3080

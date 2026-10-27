@@ -3,6 +3,8 @@ export function createMembers(db){
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='user_id'))db.exec('ALTER TABLE member_profiles ADD COLUMN user_id INTEGER REFERENCES users(id)');
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='birth_date'))db.exec("ALTER TABLE member_profiles ADD COLUMN birth_date TEXT NOT NULL DEFAULT ''");
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='is_member')){db.exec("ALTER TABLE member_profiles ADD COLUMN is_member INTEGER NOT NULL DEFAULT 0");db.exec("UPDATE member_profiles SET is_member=1 WHERE member_number<>'' OR member_since<>'' OR status='supporting' OR board_role<>'none'")}
+ if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='shelter'))db.exec("ALTER TABLE member_profiles ADD COLUMN shelter TEXT NOT NULL DEFAULT ''");
+ if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='animal_care_trained'))db.exec('ALTER TABLE member_profiles ADD COLUMN animal_care_trained INTEGER NOT NULL DEFAULT 0');
  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS member_account_unique ON member_profiles(user_id) WHERE user_id IS NOT NULL');
  function syncAccounts(){
   db.exec('BEGIN IMMEDIATE');try{
@@ -16,11 +18,12 @@ export function createMembers(db){
    db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e}
  }
- const list=()=>db.prepare('SELECT * FROM member_profiles ORDER BY name COLLATE NOCASE,id').all().map(m=>({...m,is_member:Boolean(m.is_member)}));
+ const list=()=>db.prepare('SELECT * FROM member_profiles ORDER BY name COLLATE NOCASE,id').all().map(m=>({...m,is_member:Boolean(m.is_member),animal_care_trained:Boolean(m.animal_care_trained)}));
  function save(id,p){
   const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
   if(!p||typeof p!=='object')fail('Kontrollera medlemsuppgifterna.');
-  const limits={name:100,email:254,phone:100,address:500,member_number:50,member_since:10,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10},data={};
+  const limits={name:100,email:254,phone:100,address:500,member_number:50,member_since:10,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150},data={};
+  const previousDetails=id===null?null:db.prepare('SELECT shelter,animal_care_trained FROM member_profiles WHERE id=?').get(id);if(p.shelter===undefined)p={...p,shelter:previousDetails?.shelter||''};
   for(const [key,limit] of Object.entries(limits)){if(key==='birth_date'&&p[key]===undefined)p={...p,birth_date:''};if(typeof p[key]!=='string'||p[key].length>limit)fail('Kontrollera medlemsuppgifterna och textlängderna.');data[key]=p[key].trim()}
   if(!data.name)fail('Ange medlemmens namn.');
   if(data.email&&!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(data.email))fail('Ange giltig e-postadress eller lämna fältet tomt.');
@@ -43,7 +46,8 @@ export function createMembers(db){
    if(db.prepare('SELECT id FROM users WHERE lower(email)=lower(?) AND id<>?').get(data.email,data.user_id))fail('E-postadressen används av ett annat konto.');
   }
   const priorMembership=id===null?null:db.prepare('SELECT is_member FROM member_profiles WHERE id=?').get(id);if(p.is_member!==undefined&&typeof p.is_member!=='boolean')fail('Välj om volontären är medlem.');data.is_member=p.is_member===undefined?(priorMembership?.is_member||0):Number(p.is_member);
-  const fields=[...Object.keys(limits),'user_id','is_member'],values=fields.map(key=>data[key]);
+  if(p.animal_care_trained!==undefined&&typeof p.animal_care_trained!=='boolean')fail('Välj om djurvårdsutbildningen är genomgången.');data.animal_care_trained=p.animal_care_trained===undefined?Number(previousDetails?.animal_care_trained||0):Number(p.animal_care_trained);
+  const fields=[...Object.keys(limits),'user_id','is_member','animal_care_trained'],values=fields.map(key=>data[key]);
   db.exec('BEGIN IMMEDIATE');try{
   if(data.user_id!==null)db.prepare('UPDATE users SET name=?,email=? WHERE id=?').run(data.name,data.email.toLowerCase(),data.user_id);
   if(id===null){const result=db.prepare('INSERT INTO member_profiles('+fields.join(',')+',updated_at) VALUES('+fields.map(()=>'?').join(',')+',?)').run(...values,Date.now());db.exec('COMMIT');return Number(result.lastInsertRowid)}

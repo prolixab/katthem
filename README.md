@@ -195,3 +195,14 @@ Födelsedatum är frivilligt och bara synligt för admin/superadmin tillsammans 
 
 ### Volontärer och medlemsmarkering (0.5.002)
 Sidan heter Volontärer. Alla profiler är volontärprofiler; medlemskap i föreningen anges separat med Är medlem i föreningen. Befintliga profiler med medlemsnummer, medlemsdatum, stödmedlemsstatus eller styrelseroll behåller medlemsmarkering vid uppgraderingen. Kontorollen Admin är skild från styrelserollen i profilen. Överst finns en gemensam fällbar lista för Styrelse och administratörer, med styrelsen först och övriga admins därefter. Alla inloggade volontärer ser namn och roll, men inga kontaktuppgifter, födelsedatum, medlemsmarkeringar eller privata anteckningar. Endast admin och superadmin får den separata volontärslistan med sökning och filter för medlemskap, grönmarkering och kontostatus. Kontoåtgärder ligger på respektive volontärkort.
+
+Admin och superadmin använder samma Bekräfta bokning och Avboka pass som volontärer, i knappraden längst ned i passdialogen. Självbokning använder alltid det inloggade kontot, oavsett vilken annan volontär som valts. Administrativa bokningar åt andra ligger separat. Alla ordinarie bokningsvarningar gäller.
+
+På kalenderkortet kan admin och superadmin också bekräfta egen bokning direkt under Hantera pass. Knappen visas bara på framtida, ej inställda pass där personen inte redan är bokad. Samma kontroller för bemanning och överlappning används.
+
+### Nyheter ovanför kalendern
+Admin och superadmin publicerar via Administration → Nyheter ovanför kalendern. Välj 1, 3 eller 7 dagar, ett eget slutdatum eller ingen tidsgräns. Läsaren kan dölja varje nyhet, vilket sparas per konto i databasen och gäller på alla enheter. Sluttiden gäller oavsett om nyheten lästs. Redigering ger en ny version som visas igen. Nyheter kan avpubliceras; gamla versioner kan inte skriva över nyare ändringar. Endast publicerade, ej utgångna nyheter som inte dolts hämtas för volontären.
+
+Manualen i Praktisk information är samlad och uppdaterad i 0.5.007, med rollanpassade avsnitt för samtliga boknings-, kalender-, nyhets-, profil-, bemannings- och administrationsfunktioner. Samla in uppgifter ingår som ett fällbart avsnitt sist i manualen för admin och superadmin. Volontärer får enbart användarhjälpen.
+
+Volontärprofiler har Katthem (namn/ort, frivillig text) och markeringen Har gått djurvårdsutbildningen. Utbildning visas på kort och profil samt som filter. Praktisk information visar en kontaktlista för inloggade med styrelsen och utbildade: namn, styrelseroll/uppdrag, utbildningsmarkering, katthem och telefon. Saknas telefon visas Kontakta via Messenger. Vilande/avslutade profiler och inaktiva konton utesluts. Andra privata fält som födelsedatum, adress och anteckningar delas inte i kontaktlistan.
