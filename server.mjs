@@ -1,5 +1,6 @@
 import {createRecurringBookings} from './recurring.mjs';
 import {createNews} from './news.mjs';
+import {createCsvExports} from './csv-exports.mjs';
 import {checklistGroups} from './checklist.mjs';
 import {createSchedule} from './schedule.mjs';
 import {createNotifications} from './notifications.mjs';
@@ -120,6 +121,7 @@ if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('superadmin-danie
 }
 const emailSettings=createEmailSettings({dataDir,defaultUrl:appOrigin||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
 const reminders=createReminders(db,{mailProvider:emailSettings});
+const csvExports=createCsvExports(db,emailSettings);
 const schedule=createSchedule(db,sundayRules);schedule.ensure();
 const notifications=createNotifications(db,emailSettings);
 const passwordReset=createPasswordReset(db,emailSettings,hash);
@@ -144,8 +146,8 @@ function snapshot(user){
  const counts=completedCounts();
  const greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0)).map(u=>u.id));
  const greenCounts=new Map();for(const b of db.prepare('SELECT user_id,slot_id FROM bookings').all())if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
- const directory=members.list().flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
- const contacts=members.list().filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
+ const directory=members.list().flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
+ const contacts=members.list().filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  return {contacts,news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?members.list():undefined,door_code:db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get(),checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:db.prepare('SELECT location FROM volunteer_info WHERE id=1').get(),change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,EXISTS(SELECT 1 FROM volunteer_meeting_origins v WHERE v.slot_id=s.id) volunteer_meeting,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id).map(s=>({...s,green_booked:greenCounts.get(s.id)||0})),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
@@ -285,8 +287,9 @@ const server=http.createServer(async(req,res)=>{
   db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(...fields.map(k=>p[k].trim()));return send(snapshot(user));
  }
  if(url.pathname.startsWith('/api/email-settings')&&!isSuperAdmin(user))fail('Endast superadmin får hantera e-postinställningar.',403);
- if(url.pathname==='/api/email-settings'&&req.method==='GET')return send(emailSettings.settings());
- if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);return send(emailSettings.save(p))}
+ if(url.pathname==='/api/email-settings'&&req.method==='GET')return send({...emailSettings.settings(),csv_export_status:csvExports.status()});
+ if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);emailSettings.save(p);csvExports.configure();return send({...emailSettings.settings(),csv_export_status:csvExports.status()})}
+ if(url.pathname==='/api/email-settings/csv-send'&&req.method==='POST')return send(await csvExports.run({force:true}));
  if(url.pathname==='/api/email-settings/test'&&req.method==='POST'){const p=await body(req);return send(await emailSettings.test(p.to))}
  if(url.pathname==='/api/reminders/send'&&req.method==='POST'){if(!reminders.status().configured)fail('E-post är inte konfigurerad. Öppna E-postinställningar i Administration.',503);const result=await reminders.run();return send({...snapshot(user),reminder_result:result})}
  if(url.pathname==='/api/export'&&req.method==='GET'){
@@ -365,11 +368,11 @@ const server=http.createServer(async(req,res)=>{
  res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.',code:e.status?e.code:undefined},e.status||500)}
 });
-async function maintenance(){schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run()])}
+async function maintenance(){schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run()])}
 const reminderTimer=setInterval(()=>maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.')),60000);reminderTimer.unref();
 maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.'));
 server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Katthemmet: http://${host}:${server.address().port}`));
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{
- clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain()]);db.close();process.exit(0)});
+ clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain()]);db.close();process.exit(0)});
  setTimeout(()=>process.exit(1),10000).unref();
 });

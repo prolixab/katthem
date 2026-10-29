@@ -5,6 +5,7 @@ export function createMembers(db){
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='is_member')){db.exec("ALTER TABLE member_profiles ADD COLUMN is_member INTEGER NOT NULL DEFAULT 0");db.exec("UPDATE member_profiles SET is_member=1 WHERE member_number<>'' OR member_since<>'' OR status='supporting' OR board_role<>'none'")}
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='shelter'))db.exec("ALTER TABLE member_profiles ADD COLUMN shelter TEXT NOT NULL DEFAULT ''");
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='animal_care_trained'))db.exec('ALTER TABLE member_profiles ADD COLUMN animal_care_trained INTEGER NOT NULL DEFAULT 0');
+ if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='messenger_url'))db.exec("ALTER TABLE member_profiles ADD COLUMN messenger_url TEXT NOT NULL DEFAULT ''");
  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS member_account_unique ON member_profiles(user_id) WHERE user_id IS NOT NULL');
  function syncAccounts(){
   db.exec('BEGIN IMMEDIATE');try{
@@ -22,9 +23,10 @@ export function createMembers(db){
  function save(id,p){
   const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
   if(!p||typeof p!=='object')fail('Kontrollera medlemsuppgifterna.');
-  const limits={name:100,email:254,phone:100,address:500,member_number:50,member_since:10,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150},data={};
-  const previousDetails=id===null?null:db.prepare('SELECT shelter,animal_care_trained FROM member_profiles WHERE id=?').get(id);if(p.shelter===undefined)p={...p,shelter:previousDetails?.shelter||''};
+  const limits={name:100,email:254,phone:100,address:500,member_number:50,member_since:10,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150,messenger_url:500},data={};
+  const previousDetails=id===null?null:db.prepare('SELECT shelter,animal_care_trained,messenger_url FROM member_profiles WHERE id=?').get(id);if(p.shelter===undefined)p={...p,shelter:previousDetails?.shelter||''};if(p.messenger_url===undefined)p={...p,messenger_url:previousDetails?.messenger_url||''};
   for(const [key,limit] of Object.entries(limits)){if(key==='birth_date'&&p[key]===undefined)p={...p,birth_date:''};if(typeof p[key]!=='string'||p[key].length>limit)fail('Kontrollera medlemsuppgifterna och textlängderna.');data[key]=p[key].trim()}
+  if(data.messenger_url){try{const url=new URL(data.messenger_url);if(url.protocol!=='https:'||url.username||url.password||url.port||!(['m.me','messenger.com','www.messenger.com'].includes(url.hostname)&&url.pathname!=='/'||['facebook.com','www.facebook.com','m.facebook.com'].includes(url.hostname)&&url.pathname.startsWith('/messages/t/')))throw Error();data.messenger_url=url.href}catch{fail('Ange en giltig HTTPS-länk till Messenger (m.me, messenger.com eller facebook.com/messages/t/), eller lämna fältet tomt.')}}
   if(!data.name)fail('Ange medlemmens namn.');
   if(data.email&&!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(data.email))fail('Ange giltig e-postadress eller lämna fältet tomt.');
   if(!['active','supporting','paused','ended'].includes(data.status)||!['none','chair','vice_chair','treasurer','secretary','member','deputy','other'].includes(data.board_role))fail('Kontrollera medlemsstatus och styrelseroll.');
