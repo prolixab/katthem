@@ -222,3 +222,5 @@ Funktionen är nu implementerad efter användarens uttryckliga godkännande av u
 Nästa körtid, senaste lyckade utskick och generiskt fel sparas i SQLite och visas bara för superadmin. Misslyckanden försöks igen tidigast efter en timme. Lyckade försök upprepas inte vid omstart. Samtidiga körningar i samma serverprocess delar ett jobb. Samma Message-ID används vid återförsök; ett avbrott efter SMTP-leverans men före databasmarkering kan ändå orsaka dubblett. Bilagor över totalt 15 MiB avvisas. Exporten skickas via sparad Gmail och inte via alternativ Resend-konfiguration.
 
 Volontärskorten och grupperna med styrelse/admins/djurvårdsutbildade använder två kolumner även i smalare datorfönster; endast skärmar på högst 600 px går över till en kolumn. Kortens mellanrum och knappar är kompaktare för mindre scrollande vid redigering. Manualen är uppdaterad.
+
+Volontärprofilens visning och redigering använder två kolumner i en bredare dialog. Kontakt och katthem ligger i vänsterkolumnen och Medlemskap och uppdrag till höger. På mobil används en kolumn. Det frivilliga Messenger-fältet finns i kontaktkolumnen. Manualen är uppdaterad.
