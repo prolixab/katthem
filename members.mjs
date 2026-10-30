@@ -20,7 +20,7 @@ export function createMembers(db){
   }catch(e){db.exec('ROLLBACK');throw e}
  }
  const list=()=>db.prepare('SELECT * FROM member_profiles ORDER BY name COLLATE NOCASE,id').all().map(m=>({...m,is_member:Boolean(m.is_member),animal_care_trained:Boolean(m.animal_care_trained)}));
- function save(id,p){
+ function save(id,p,{transaction=true}={}){
   const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
   if(!p||typeof p!=='object')fail('Kontrollera medlemsuppgifterna.');
   const limits={name:100,email:254,phone:100,address:500,member_number:50,member_since:10,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150,messenger_url:500},data={};
@@ -50,12 +50,12 @@ export function createMembers(db){
   const priorMembership=id===null?null:db.prepare('SELECT is_member FROM member_profiles WHERE id=?').get(id);if(p.is_member!==undefined&&typeof p.is_member!=='boolean')fail('Välj om volontären är medlem.');data.is_member=p.is_member===undefined?(priorMembership?.is_member||0):Number(p.is_member);
   if(p.animal_care_trained!==undefined&&typeof p.animal_care_trained!=='boolean')fail('Välj om djurvårdsutbildningen är genomgången.');data.animal_care_trained=p.animal_care_trained===undefined?Number(previousDetails?.animal_care_trained||0):Number(p.animal_care_trained);
   const fields=[...Object.keys(limits),'user_id','is_member','animal_care_trained'],values=fields.map(key=>data[key]);
-  db.exec('BEGIN IMMEDIATE');try{
+  if(transaction)db.exec('BEGIN IMMEDIATE');try{
   if(data.user_id!==null)db.prepare('UPDATE users SET name=?,email=? WHERE id=?').run(data.name,data.email.toLowerCase(),data.user_id);
-  if(id===null){const result=db.prepare('INSERT INTO member_profiles('+fields.join(',')+',updated_at) VALUES('+fields.map(()=>'?').join(',')+',?)').run(...values,Date.now());db.exec('COMMIT');return Number(result.lastInsertRowid)}
+  if(id===null){const result=db.prepare('INSERT INTO member_profiles('+fields.join(',')+',updated_at) VALUES('+fields.map(()=>'?').join(',')+',?)').run(...values,Date.now());if(transaction)db.exec('COMMIT');return Number(result.lastInsertRowid)}
   const result=db.prepare('UPDATE member_profiles SET '+fields.map(key=>key+'=?').join(',')+',revision=revision+1,updated_at=? WHERE id=? AND revision=?').run(...values,Date.now(),id,p.revision);
-  if(!result.changes)fail('Profilen har ändrats. Öppna den igen innan du sparar.',409);db.exec('COMMIT');return id;
-  }catch(e){db.exec('ROLLBACK');throw e}
+  if(!result.changes)fail('Profilen har ändrats. Öppna den igen innan du sparar.',409);if(transaction)db.exec('COMMIT');return id;
+  }catch(e){if(transaction)db.exec('ROLLBACK');throw e}
  }
  return {list,save,syncAccounts};
 }
