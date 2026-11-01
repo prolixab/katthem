@@ -199,7 +199,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('volunteer-info','PUT',info,newAdminCookie)).status,200);
  assert.deepEqual((await(await call('state','GET',null,vc)).json()).volunteer_info,info);
  // Monthly meetings follow open house, with editable information and durable cancellation/moves.
- const meetingState=await(await call('state','GET',null,ac)).json(),meeting=meetingState.slots.find(s=>s.volunteer_meeting&&!s.cancelled);
+ const meetingState=await(await call('state','GET',null,ac)).json(),meeting=meetingState.slots.find(s=>s.volunteer_meeting&&!s.cancelled&&new Date(s.date+'T'+s.end)>new Date());
  assert.ok(meeting);assert.equal(meeting.start,'15:00');assert.equal(meeting.end,'16:00');assert.equal(meeting.kind,'event');assert.ok(meetingState.slots.some(s=>s.date===meeting.date&&s.kind==='open_house'&&s.end==='15:00'));
  assert.equal((await call('slots/'+meeting.id,'PATCH',{extra_info:'Nästa träff: välkomna!'},vc)).status,403);
  assert.equal((await call('slots/'+meeting.id,'PATCH',{extra_info:'Nästa träff: välkomna!'},newAdminCookie)).status,200);
@@ -306,6 +306,9 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision+1},vc)).status,403);
  assert.equal((await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision},ac)).status,409);
  const deletedNews=await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision+1},newAdminCookie);assert.equal(deletedNews.status,200);assert.ok(!(await deletedNews.json()).news_admin.some(n=>n.id===bulletinItem.id));
+ const beforeShelter=await(await call('state','GET',null,ac)).json(),shelterProfile=beforeShelter.members.find(m=>m.user_id===volunteerId);
+ for(const city of ['Huskvarna','Jönköping','Annan ort']){const saved=await call('members/'+shelterProfile.id,'PUT',{...shelterProfile,shelter:city,revision:(await(await call('state','GET',null,ac)).json()).members.find(m=>m.id===shelterProfile.id).revision},ac);assert.equal(saved.status,200);const own=await(await call('state','GET',null,vc)).json();assert.equal(own.shelter.configured,city!=='Annan ort');assert.equal(own.volunteer_info.location,city==='Annan ort'?'':beforeShelter.volunteer_info.location);assert.equal(own.door_code.code,city==='Annan ort'?'':beforeShelter.door_code.code);assert.ok(!own.shelter_admin)}
+ assert.equal((await call('members/'+shelterProfile.id,'PUT',{...shelterProfile,revision:(await(await call('state','GET',null,ac)).json()).members.find(m=>m.id===shelterProfile.id).revision},ac)).status,200);
  const csv=await call('export','GET',null,ac);assert.match(await csv.text(),/Testpass/);
  await stop();
  const legacy=new DatabaseSync(path.join(dir,'katthem.sqlite'));const originalHash=legacy.prepare('SELECT password FROM users WHERE email=?').get('admin@katthem.local').password;const danielId=Number(legacy.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,'admin',?)").run('Daniel','daniel@staahlis.se',originalHash,Date.now()).lastInsertRowid);legacy.prepare('INSERT INTO sessions VALUES(?,?,?)').run('old-daniel-session',danielId,Date.now()+86400000);legacy.prepare('DELETE FROM migrations WHERE name=?').run('superadmin-daniel-20261024');legacy.exec("ALTER TABLE slots DROP COLUMN cancelled; UPDATE slots SET capacity=2; UPDATE slots SET title='Kvällspass' WHERE start='18:00';" );legacy.close();
@@ -321,7 +324,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const vstate=await(await call('state','GET',null,vc)).json();assert.deepEqual(vstate.users,[]);
  assert.equal((await call('users/'+vstate.user.id,'PATCH',{active:0},ac)).status,200);assert.equal((await call('state','GET',null,vc)).status,401);
  const blocked=await fetch(base+'/api/slots',{method:'POST',headers:{cookie:ac,origin:'http://other.invalid','Content-Type':'application/json'},body:'{}'});assert.equal(blocked.status,403);
- await stop();await start({NODE_ENV:'production',HOST:'0.0.0.0',APP_URL:'https://katthem.example.se'});
+ await stop();await start({NODE_ENV:'production',HOST:'0.0.0.0',APP_URL:'https://katthem.example.se',PORTAL_SHELTER_ID:'huskvarna'});
  const health=await fetch(base+'/healthz');assert.equal(health.status,200);assert.deepEqual(await health.json(),{ok:true});
  assert.equal((await fetch(base+'/data/lokala-konton.txt')).status,404);
  const loginData=JSON.stringify({email:'admin@katthem.local',password:passwords[0]});
@@ -420,6 +423,9 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/Min första tid på katthemmet/);
  fixture.user.green=true;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/onboarding-checklist|data-checklist-item/);assert.match(elements.get('#app').innerHTML,/Manual för volontärer/);
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/data-checklist-item="sanitation" checked/);
+ fixture.user.role='superadmin';fixture.portal={selected:'huskvarna',global_superadmin:true,shelters:[{id:'huskvarna',name:'Huskvarna / Jönköping'},{id:'other',name:'Annat katthem'}]};fixture.shelter={name:'Huskvarna / Jönköping'};vm.runInContext("view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/portal-shelter/);assert.match(elements.get('#app').innerHTML,/Hantera katthem och åtkomst/);assert.match(elements.get('#app').innerHTML,/Annat katthem/);
+ fixture.portal.global_superadmin=false;fixture.user.role='admin';vm.runInContext('render()',context);assert.doesNotMatch(elements.get('#app').innerHTML,/data-action="manage-shelters"/);delete fixture.portal;
+
 
 
 });

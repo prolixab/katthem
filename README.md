@@ -32,14 +32,14 @@ Konfigurationen följer Coolifys dokumentation för [Docker och Compose](https:/
 - Bokning med rekommenderat tak på sju deltagare (fler kan boka efter bekräftelse), minst två volontärer per pass och skydd mot dubbla bokningar av samma pass och en bekräftelsefråga vid överlappande pass.
 - Mina bokningar och avbokning fram till 24 timmar innan passet.
 - Administratören kan lägga till och inaktivera volontärer, skapa och ställa in pass samt boka och avboka åt andra.
-- Administratörens volontärlista visar genomförda pass. Bokningar på avslutade, ej inställda pass räknas; volontärer med fler än 15 pass markeras grönt. Detta är en beräkning utifrån bokningar, inte närvaroregistrering.
+- Administratörens volontärlista visar genomförda pass. Bokningar på avslutade, ej inställda pass räknas; volontärer med minst 10 pass och helt genomförd introduktionschecklista markeras grönt. Manuell/importerad markering kräver också klar checklista. Detta är en beräkning utifrån bokningar, inte närvaroregistrering.
 - CSV-export med semikolon som avgränsare. I Google Sheets: Arkiv → Importera → Ladda upp, välj filen och semikolon som avgränsare vid behov.
 
 Söndagar 18–20 träffas socialiseringsgruppen för ordinarie uppgifter och socialiseringsträning med katterna. Volontärer anmäler sig via bokningen. Första söndagen varje månad är det öppet hus och passet 16–18 visas som inställt. Befintliga pass uppdateras automatiskt vid första starten med dessa regler. Bokningar behålls, även på inställda pass, så administratören kan kontakta berörda. En databaskopia sparas före uppdateringen som `data/schema-v1-backup.sqlite`.
 
 ## Data och säkerhetskopia
 
-All data sparas lokalt i **data/katthem.sqlite**. Stoppa appen och kopiera data-mappen till en säker plats för en fullständig säkerhetskopia. CSV är en rapport och ersätter inte en databaskopia. Lägg inte databasen i en offentligt delad mapp.
+Det ursprungliga katthemmets data sparas i **data/katthem.sqlite**, katthemsregister och åtkomst i **data/shelters.sqlite** och övriga katthem under **data/shelters/<id>/**. Stoppa appen och kopiera data-mappen till en säker plats för en fullständig säkerhetskopia. CSV är en rapport och ersätter inte en databaskopia. Lägg inte databasen i en offentligt delad mapp.
 
 I Coolify ligger samma filer i `/app/data` på den beständiga volymen. Volymen ersätter inte säkerhetskopior: stoppa applikationen före filkopiering, spara kopian utanför driftservern och prova återställning. Ta säkerhetskopia före uppdateringar. På en ny server återställs filerna till en volym med samma destination och skrivbehörighet före appstart.
 
@@ -231,4 +231,17 @@ Alla inloggade har Anslagstavla i sidmenyn. Samma publicerade nyheter som på st
 ### Gemensam volontärhantering (0.6.001)
 Lägg till volontär och Redigera volontärprofil hanterar nu både personuppgifter och inloggning. Separata skapandeknappar och väljare för kontokoppling har tagits bort. Ny volontär kräver e-post och tillfälligt lösenord, med behörighet som superadmin kan välja. Äldre poster utan inloggning kan kompletteras i samma formulär. Gemensamma /api/volunteers-anrop sparar person och inloggning atomärt; befintliga lösenord, id och bokningar behålls. Ett nytt lösenord eller ändrad behörighet/aktivering avslutar tidigare sessioner. Befintliga admin-/superadminskydd gäller och egen roll/aktivering kan inte ändras där. Äldre API-vägar finns kvar för kompatibilitet och CSV-import. Manualen är uppdaterad.
 
-Version 0.7.001: Volontärer blir gröna vid minst tio genomförda bokningar och komplett introduktionschecklista. Manuell/importerad grönmarkering ersätter bara passkravet; admin och superadmin är fortsatt alltid gröna. Söndagar har ett gemensamt socialiseringspass 16–20 även vid öppet hus. Framtida oförändrade standardpass slås samman med bibehållna deltagare; historik och anpassade pass bevaras. Dörrkod och tre statistikfält visas i fyra lika stora rutor på stor skärm, med dörrkoden först.
+Version 0.6.002: Volontärer blir gröna vid minst tio genomförda bokningar och komplett introduktionschecklista. Manuell/importerad grönmarkering ersätter bara passkravet; admin och superadmin är fortsatt alltid gröna. Söndagar har ett gemensamt socialiseringspass 16–20 även vid öppet hus. Framtida oförändrade standardpass slås samman med bibehållna deltagare; historik och anpassade pass bevaras. Dörrkod och tre statistikfält visas i fyra lika stora rutor på stor skärm, med dörrkoden först.
+
+Katthem kopplas via profilfältet Katthem: Huskvarna och Jönköping/Jonkoping avser samma adress och dörrkod. Äldre tomma profiler använder befintligt katthem; en okänd ort visar ingen adress eller kod. Samma adressval används i personens kalenderexport och prenumeration. Admin redigerar fortsatt Huskvarna-katthemmets gemensamma adress och kod.
+
+
+## Flera katthem (0.6.003)
+
+Starta med npm start (portal.mjs), även i produktion. Docker och Windows-startfilen använder portalen. server.mjs är en intern server per katthem och får inte användas som publik produktionsstart. Portalen binder den publika porten och startar en intern server på loopback per registrerat katthem, med en hemlig intern åtkomstnyckel. Alla API-anrop auktoriseras i portalen innan de skickas till valt hem. Det är separata SQLite-databaser, e-postinställningar, CSV-jobb, kalenderprenumerationer, schema, profiler och nyheter.
+
+Befintlig data ligger kvar orörd i det ursprungliga hemmet Huskvarna / Jönköping. Katthemstillhörighet bestäms av kontots ordinarie hem och explicita tilldelningar, aldrig av fritext eller matchande e-post. Superadmin i det ursprungliga hemmet har tillgång till alla hem. Under Administration → Hantera katthem och åtkomst kan superadmin skapa hem och tilldela/återkalla extra åtkomst som admin eller volontär. Nya hem får inga exempelkonton, ingen förifylld kod och ingen kopia av Huskvarnas adress eller e-postinställningar. Välj det nya hemmet och fyll i uppgifterna där. Systemets superadmin skapas bara i det ursprungliga hemmet.
+
+Inloggningen väljer det ordinarie hemmet. Tilldelad styrelse/admin använder sitt ordinarie lösenord och kan växla mellan tilldelade hem. För ett annat hem skapas en separat åtkomstidentitet med egen lokal profil och bokningshistorik. Den kan inte användas för separat inloggning; åtkomsten kontrolleras mot ursprungskontot och tilldelningarna vid varje anrop. Ändringar i en annan persons uppdrag i ett hem ger inte åtkomst till fler hem. Återkallad åtkomst spärrar även den tilldelade identitetens kalenderprenumeration, medan historik behålls. Avstängning av ursprungskontot stoppar åtkomst till alla dess hem.
+
+Fullständig backup: stoppa portalen och kopiera hela DATA_DIR, inklusive shelters.sqlite, katthem.sqlite, shelters/ och varje hems e-postfiler/nycklar. En CSV-export gäller bara valt hem och innehåller inte central behörighetskonfiguration. Kör en portal per datamapp, inte flera repliker. Vid första uppgraderingen behöver tidigare inloggade logga in på nytt. Inga ytterligare katthem eller personliga tilldelningar skapas utan att superadmin gör det i gränssnittet.

@@ -10,7 +10,7 @@ export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.n
   if(db.prepare('SELECT COUNT(*) n FROM password_resets WHERE user_id=? AND created_at>?').get(user.id,time-1800000).n>=3)return {message};
   const token=randomBytes(32).toString('hex'),tokenHash=digest(token);
   db.prepare('INSERT INTO password_resets VALUES(?,?,?,?)').run(tokenHash,user.id,time,time+1800000);
-  try{await mailProvider.send({to:String(email).trim().toLowerCase(),subject:'Återställ ditt lösenord – Katthemmet',text:`Du har begärt ett nytt lösenord till volontärportalen.\n\nÖppna länken inom 30 minuter:\n${mailProvider.appUrl()}/#reset=${token}\n\nLänken kan användas en gång. Om du inte begärt detta kan du bortse från mejlet. Ditt lösenord har inte ändrats.`,key:'katthem-reset/'+tokenHash})}
+  try{await mailProvider.send({to:String(email).trim().toLowerCase(),subject:'Återställ ditt lösenord – Katthemmet',text:`Du har begärt ett nytt lösenord till volontärportalen.\n\nÖppna länken inom 30 minuter:\n${(()=>{const u=new URL(mailProvider.appUrl());u.hash='reset='+token;return u.href})()}\n\nLänken kan användas en gång. Om du inte begärt detta kan du bortse från mejlet. Ditt lösenord har inte ändrats.`,key:'katthem-reset/'+tokenHash})}
   catch{db.prepare('DELETE FROM password_resets WHERE token_hash=?').run(tokenHash)}
   return {message};
  }

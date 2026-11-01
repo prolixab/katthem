@@ -1,0 +1,137 @@
+import http from 'node:http';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawn} from 'node:child_process';
+import {mkdirSync,existsSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+import {randomBytes,scryptSync} from 'node:crypto';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const primary='huskvarna';
+export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=process.env}={}){
+ mkdirSync(dataDir,{recursive:true});
+ const registry=new DatabaseSync(path.join(dataDir,'shelters.sqlite'));
+ registry.exec(`PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;
+ CREATE TABLE IF NOT EXISTS shelters(id TEXT PRIMARY KEY,name TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS grants(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL REFERENCES shelters(id),role TEXT NOT NULL CHECK(role IN ('admin','volunteer')),PRIMARY KEY(source,user_id,target));
+ CREATE TABLE IF NOT EXISTS portal_sessions(token TEXT PRIMARY KEY,source TEXT NOT NULL,user_id INTEGER NOT NULL,source_token TEXT NOT NULL,selected TEXT NOT NULL,expires INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS shadows(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,local_id INTEGER NOT NULL,PRIMARY KEY(source,user_id,target),UNIQUE(target,local_id));`);
+ registry.prepare('INSERT OR IGNORE INTO shelters VALUES(?,?)').run(primary,'Huskvarna / Jönköping');
+ const rates=new Map();
+ const workers=new Map(),starts=new Map(),secret=randomBytes(32).toString('hex');let closing=false;
+ const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
+ const houses=()=>registry.prepare('SELECT * FROM shelters ORDER BY name,id').all();
+ const house=id=>registry.prepare('SELECT * FROM shelters WHERE id=?').get(id);
+ const folder=id=>id===primary?dataDir:path.join(dataDir,'shelters',id);
+ async function worker(id){
+  if(workers.has(id))return workers.get(id);if(starts.has(id))return starts.get(id);
+  if(!house(id))fail('Katthemmet finns inte.',404);
+  const promise=(async()=>{
+   const child=spawn(process.execPath,[path.join(root,'server.mjs')],{cwd:root,env:{...env,HOST:'127.0.0.1',PORT:'0',DATA_DIR:folder(id),PORTAL_PUBLIC_URL:env.APP_URL||'http://'+host+':'+port,PORTAL_SHELTER_ID:id,PORTAL_SHELTER_NAME:house(id).name,GATEWAY_SECRET:secret,EMPTY_SHELTER:id===primary?'':'1',BOOTSTRAP_SUPERADMIN_EMAIL:id===primary?(env.BOOTSTRAP_SUPERADMIN_EMAIL||''):'',RESEND_API_KEY:id===primary?(env.RESEND_API_KEY||''):'',EMAIL_FROM:id===primary?(env.EMAIL_FROM||''):''},windowsHide:true,stdio:['ignore','pipe','pipe']});
+   let address;try{address=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Katthemmet kunde inte starta.')),45000);child.stdout.on('data',chunk=>{const match=chunk.toString().match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0])}});child.on('error',reject);child.once('exit',()=>{clearTimeout(timer);reject(Error('Katthemmets server stoppades.'))})})}catch(e){child.kill();throw e}
+   const db=new DatabaseSync(path.join(folder(id),'katthem.sqlite'));db.exec('PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000');
+   const result={child,db,address};workers.set(id,result);child.on('exit',()=>{workers.delete(id);db.close();if(!closing)console.error('Katthemmet behöver startas om:',id)});return result;
+  })();starts.set(id,promise);try{return await promise}finally{starts.delete(id)}
+ }
+ await worker(primary);
+ // Start every configured shelter so reminders and CSV jobs run independently.
+ for(const h of houses())await worker(h.id);
+ async function principal(token){
+  const session=registry.prepare('SELECT * FROM portal_sessions WHERE token=? AND expires>?').get(token||'',Date.now());if(!session)return null;
+  const w=await worker(session.source);const user=w.db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.id=?').get(session.source_token,Date.now(),session.user_id);
+  if(!user||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(session.source,user?.id??-1))return null;
+  return {...session,user,global:session.source===primary&&user.role==='superadmin'};
+ }
+ function access(p,target){if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
+ function metadata(p,selected){return {selected,global_superadmin:p.global,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
+ async function localSession(p,target){
+  if(target===p.source)return p.source_token;
+  const role=access(p,target);if(!role)fail('Du saknar åtkomst till katthemmet.',403);
+  const w=await worker(target);let shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
+  if(!shadow){
+   // A linked access identity is separate from local volunteers, including matching e-mail addresses.
+   const email=w.db.prepare('SELECT 1 FROM users WHERE email=?').get(p.user.email)?'portal-'+randomBytes(16).toString('hex')+'@access.invalid':p.user.email;const salt=randomBytes(16).toString('hex'),password=salt+':'+scryptSync(randomBytes(32).toString('hex'),salt,64).toString('hex');
+   const id=Number(w.db.prepare('INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)').run(p.user.name,email,password,role,Date.now()).lastInsertRowid);
+   registry.prepare('INSERT INTO shadows VALUES(?,?,?,?)').run(p.source,p.user_id,target,id);shadow={local_id:id};
+  }
+  w.db.prepare('UPDATE users SET role=?,active=1 WHERE id=?').run(role,shadow.local_id);
+  const token=randomBytes(32).toString('hex');w.db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());w.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token,shadow.local_id,Math.min(p.expires,Date.now()+3600000));return token;
+ }
+ async function reconcile(){for(const link of registry.prepare('SELECT * FROM shadows').all()){const source=await worker(link.source),target=await worker(link.target),user=source.db.prepare('SELECT * FROM users WHERE id=?').get(link.user_id);const role=user?.active?access({source:link.source,user_id:link.user_id,user,global:link.source===primary&&user.role==='superadmin'},link.target):null;target.db.prepare('UPDATE users SET active=?,role=? WHERE id=?').run(role?1:0,role||'volunteer',link.local_id);if(!role)target.db.prepare('DELETE FROM sessions WHERE user_id=?').run(link.local_id)}}
+ const publicList=()=>({shelters:houses(),default_shelter:primary});
+ async function bytes(req){const chunks=[];let size=0;for await(const b of req){size+=b.length;if(size>600000)fail('För stor begäran.',413);chunks.push(b)}return Buffer.concat(chunks)}
+ function json(bytes){try{return JSON.parse(bytes.toString()||'{}')}catch{fail('Ogiltiga uppgifter.')}}
+ const server=http.createServer(async(req,res)=>{
+  const send=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data))};
+  try{
+   const url=new URL(req.url,'http://localhost'),write=!['GET','HEAD'].includes(req.method);
+   const origin=env.APP_URL?new URL(env.APP_URL).origin:'http://'+req.headers.host;
+   if(write&&req.headers.origin&&req.headers.origin!==origin)fail('Begäran blockerades.',403);
+   if(write&&['/api/login','/api/password-reset/request','/api/password-reset/confirm'].includes(url.pathname)){const family=url.pathname==='/api/login'?'login':'reset',key=family+':'+req.socket.remoteAddress;let rate=rates.get(key);if(!rate||rate.until<Date.now()){rate={count:0,until:Date.now()+60000};rates.set(key,rate)}if(++rate.count>(family==='login'?15:10))fail('För många försök. Vänta en minut.',429)}
+   const incomingToken=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('portal_session='))?.slice(15);
+   let p=await principal(incomingToken),target=p?.selected||primary,token='';let payload=write?await bytes(req):null;
+   const requested=req.headers['x-katthem']||url.searchParams.get('shelter');
+   if(requested)target=String(requested);
+   const cookie=(value,max=86400)=>'portal_session='+value+'; HttpOnly; SameSite=Strict; Path=/; Max-Age='+max+(env.NODE_ENV==='production'?'; Secure':'');
+   if(url.pathname==='/api/portal'&&req.method==='GET')return send(publicList());
+   if(url.pathname==='/api/login'&&req.method==='POST'){
+    const fields=json(payload);target=fields.portal_shelter||primary;if(!house(target))fail('Välj ett katthem.');payload=Buffer.from(JSON.stringify({email:fields.email,password:fields.password}));
+   }else if(url.pathname==='/api/portal/select'&&req.method==='POST'){
+    if(!p)fail('Logga in för att fortsätta.',401);target=json(payload).shelter;if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);
+    registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(target,incomingToken);return send({ok:true});
+   }else if(url.pathname.startsWith('/api/portal/manage')){
+    if(!p)fail('Logga in för att fortsätta.',401);if(!p.global)fail('Endast superadmin kan hantera katthem och åtkomst.',403);
+    if(url.pathname==='/api/portal/manage'&&req.method==='GET'){
+     const users=[];for(const h of houses()){const w=await worker(h.id);for(const u of w.db.prepare('SELECT id,name,email,role,active FROM users ORDER BY name').all()){if(!registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(h.id,u.id))users.push({...u,source:h.id})}}
+     return send({shelters:houses(),users,grants:registry.prepare('SELECT * FROM grants ORDER BY source,user_id,target').all()});
+    }
+    if(url.pathname==='/api/portal/manage/shelters'&&req.method==='POST'){
+     const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||typeof fields.address!=='string'||fields.address.length>4000)fail('Ange katthemmets namn och adress.');if(houses().length>=50)fail('Högst 50 katthem kan läggas till.');
+     const id=randomBytes(12).toString('hex');registry.prepare('INSERT INTO shelters VALUES(?,?)').run(id,fields.name.trim());try{const w=await worker(id);w.db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(fields.address.trim())}catch(e){registry.prepare('DELETE FROM shelters WHERE id=?').run(id);throw e}return send({id},201);
+    }
+    if(url.pathname==='/api/portal/manage/grants'&&req.method==='POST'){
+     const fields=json(payload);if(!house(fields.source)||!house(fields.target)||!Number.isInteger(fields.user_id)||!['admin','volunteer'].includes(fields.role)||typeof fields.enabled!=='boolean'||fields.source===fields.target)fail('Välj person, annat katthem och behörighet.');
+     const source=await worker(fields.source),u=source.db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(fields.user_id);if(!u||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(fields.source,fields.user_id))fail('Välj ett aktivt ordinarie konto.');
+     if(fields.enabled)registry.prepare('INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET role=excluded.role').run(fields.source,fields.user_id,fields.target,fields.role);
+     else{registry.prepare('DELETE FROM grants WHERE source=? AND user_id=? AND target=?').run(fields.source,fields.user_id,fields.target);const shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(fields.source,fields.user_id,fields.target);if(shadow){const w=await worker(fields.target);w.db.prepare('DELETE FROM sessions WHERE user_id=?').run(shadow.local_id);w.db.prepare('UPDATE users SET active=0 WHERE id=?').run(shadow.local_id)}}return send({ok:true});
+    }
+    fail('Funktionen finns inte.',404);
+   }else if(/^\/calendar\/[a-f0-9]{64}\.ics$/.test(url.pathname)){
+    const calendarToken=url.pathname.slice(10,-4);let found=null;for(const h of houses()){const w=await worker(h.id);if(w.db.prepare('SELECT u.id FROM calendar_subscriptions c JOIN users u ON u.id=c.user_id WHERE c.token=? AND u.active=1').get(calendarToken)){const owner=w.db.prepare('SELECT user_id FROM calendar_subscriptions WHERE token=?').get(calendarToken);const link=registry.prepare('SELECT * FROM shadows WHERE target=? AND local_id=?').get(h.id,owner.user_id);if(link){const source=await worker(link.source),user=source.db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(link.user_id);if(!user||!access({source:link.source,user_id:link.user_id,user,global:link.source===primary&&user.role==='superadmin'},h.id))continue}found=h.id;break}}if(!found)fail('Kalenderlänken är ogiltig eller återkallad.',404);target=found;
+   }else if(url.pathname.startsWith('/api/')){
+    const publicReset=['/api/password-reset/request','/api/password-reset/confirm'].includes(url.pathname);
+    if(publicReset){target=requested||primary;if(!house(target))fail('Katthemmet finns inte.',404)}else{
+     if(!p)fail('Logga in för att fortsätta.',401);
+     if(url.pathname==='/api/logout'&&req.method==='POST'){const w=await worker(p.source);w.db.prepare('DELETE FROM sessions WHERE token=?').run(p.source_token);registry.prepare('DELETE FROM portal_sessions WHERE token=?').run(incomingToken);res.setHeader('Set-Cookie',cookie('',0));return send({ok:true})}
+     if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);
+     if(write&&(/^\/api\/users(?:\/|$)/.test(url.pathname)||/^\/api\/volunteers(?:\/|$)/.test(url.pathname))){const fields=json(payload),tw=await worker(target),id=Number(url.pathname.split('/')[3])||-1;const localId=url.pathname.startsWith('/api/volunteers/')?tw.db.prepare('SELECT user_id FROM member_profiles WHERE id=?').get(id)?.user_id:id;const managed=registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,localId??-1);const existing=localId?tw.db.prepare('SELECT * FROM users WHERE id=?').get(localId):null;const requestedRole=fields.account?.role||fields.role;
+      if(managed){const a=fields.account||fields;if((requestedRole&&requestedRole!==existing.role)||(a.active!==undefined&&a.active!==Boolean(existing.active))||a.password)fail('Ändra tilldelad åtkomst under Hantera katthem och åtkomst.',403)}
+      if(target!==primary&&requestedRole==='superadmin'&&(!managed||existing.role!=='superadmin'))fail('Systemets superadmin skapas i det ursprungliga katthemmet.',403)
+     }
+     if(url.pathname==='/api/password'&&req.method==='POST')target=p.source;
+     token=await localSession(p,target);
+     // A selected shelter cannot grant system-wide superadmin rights to another tenant.
+     if(!p.global&&url.pathname.startsWith('/api/email-settings'))fail('Endast superadmin kan hantera e-post.',403);
+     if(target!==p.source&&/^\/api\/users\/\d+/.test(url.pathname)&&Number(url.pathname.split('/')[3])===registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id)fail('Hantera ditt ordinarie konto i ditt hemmakatthem.');
+    }
+   }else target=primary;
+   const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
+   const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
+   if(result.ok&&write&&/^\/api\/(users|volunteers|members)(\/|$)/.test(url.pathname))await reconcile();
+   const contentType=result.headers.get('content-type')||'',buffer=Buffer.from(await result.arrayBuffer());
+   if(url.pathname==='/api/login'&&result.ok){
+    const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
+    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users)u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));data.portal=metadata(p,target);return send(data);
+   }
+   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users)u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));data.portal=metadata(p,target);data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
+   for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
+  }catch(e){if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}
+ });
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve)});
+ const close=async()=>{closing=true;await new Promise(r=>server.close(r));await Promise.all([...workers.values()].map(w=>new Promise(r=>{if(w.child.exitCode!==null)return r();w.child.once('exit',r);w.child.kill()})));registry.close()};
+ return {server,close};
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ const network=process.platform==='win32'&&root.startsWith('\\\\');const dataDir=process.env.DATA_DIR||(network&&process.env.LOCALAPPDATA?path.join(process.env.LOCALAPPDATA,'Katthem','data'):path.join(root,'data'));
+ const portal=await createPortal({dataDir,host:process.env.HOST||'127.0.0.1',port:Number(process.env.PORT||3080)});console.log('Katthemmet: http://'+(process.env.HOST||'127.0.0.1')+':'+portal.server.address().port);
+ for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>portal.close().then(()=>process.exit(0)));
+}
