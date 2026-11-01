@@ -50,7 +50,7 @@ if(!db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='extra_info'))
 function sundayRules(date,start,end,title,note=''){
  const day=new Date(date+'T12:00:00');
  const sunday=day.getDay()===0;
- if(sunday&&day.getDate()<=7&&start<'18:00'&&end>'16:00')return {title:'Inställt – öppet hus',note:'Öppet hus första söndagen i månaden. Passet 16–18 är inställt.',cancelled:1};
+ if(sunday&&start==='16:00'&&(end==='18:00'||end==='20:00'))return {title:'Socialiseringsgruppen',note:'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.',cancelled:0,start:'16:00',end:'20:00'};
  if(sunday&&start==='18:00'&&end==='20:00')return {title:'Socialiseringsgruppen',note:'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.',cancelled:0};
  return {title,note,cancelled:0};
 }
@@ -77,7 +77,7 @@ if(!db.prepare('SELECT id FROM users LIMIT 1').get()){
  writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Startkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`,{mode:0o600});
  const monday=new Date();monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
  const insert=db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled) VALUES(?,?,?,?,?,?,?)');
- for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']]){const rule=sundayRules(localDate(date),start,end,title,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');insert.run(localDate(date),start,end,rule.title,0,rule.note,rule.cancelled);}}
+ for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']]){if(date.getDay()===0&&start==='18:00')continue;const rule=sundayRules(localDate(date),start,end,title,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');insert.run(localDate(date),rule.start||start,rule.end||end,rule.title,0,rule.note,rule.cancelled);}}
 }
 db.prepare('UPDATE users SET created_at=? WHERE created_at=0').run(Date.now());
 // Explicit bootstrap for existing installations; never choose a person's account automatically.
@@ -142,11 +142,12 @@ function completedCounts(userId){
  for(const b of rows){const ended=new Date(b.date+'T'+b.end+':00').getTime();if(ended<=now){counts.set(b.user_id,(counts.get(b.user_id)||0)+1);counts.last.set(b.user_id,Math.max(counts.last.get(b.user_id)||0,ended))}}
  return counts;
 }
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,last_completed_at:counts.last.get(u.id)||null,inactive_month:isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),green:isGreen(u,completed)}}
+function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return [...checklistIds].every(id=>checked.has(id))}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,last_completed_at:counts.last.get(u.id)||null,inactive_month:isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function snapshot(user){
  ensureOpenHouse();schedule.ensure();members.syncAccounts();
  const counts=completedCounts();
- const greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0)).map(u=>u.id));
+ const greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
  const greenCounts=new Map();for(const b of db.prepare('SELECT user_id,slot_id FROM bookings').all())if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
  const directory=members.list().flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  const contacts=members.list().filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
@@ -172,8 +173,8 @@ function extraSlotPlan(p){
  if(!Number.isFinite(end.getTime())||end.toISOString().slice(0,10)!==p.until||end<start||end-start>364*86400000)fail('Välj ett giltigt slutdatum högst ett år efter startdatum.');
  const rows=[];for(let d=new Date(start);d<=end;d.setUTCDate(d.getUTCDate()+p.interval*7)){
  const date=d.toISOString().slice(0,10),rule=sundayRules(date,p.start,p.end,p.title.trim(),p.note||'');
- const exists=db.prepare("SELECT id FROM slots WHERE date=? AND start=? AND end=? AND kind='regular' LIMIT 1").get(date,p.start,p.end);
- rows.push({date,start:p.start,end:p.end,title:rule.title,note:rule.note,extra_info:(p.extra_info||'').trim(),status:rule.cancelled?'cancelled':exists?'exists':'new'});
+ const exists=db.prepare("SELECT id FROM slots WHERE date=? AND start=? AND end=? AND kind='regular' LIMIT 1").get(date,rule.start||p.start,rule.end||p.end);
+ rows.push({date,start:rule.start||p.start,end:rule.end||p.end,title:rule.title,note:rule.note,extra_info:(p.extra_info||'').trim(),status:rule.cancelled?'cancelled':exists?'exists':'new'});
  }
  return {rows,key:createHash('sha256').update(JSON.stringify(rows)).digest('hex')};
 }
@@ -340,7 +341,7 @@ const server=http.createServer(async(req,res)=>{
   const p=await body(req);validateSlot(p);const kind=p.kind||'regular';if(!['regular','event'].includes(kind))fail('Öppet hus skapas automatiskt första söndagen i månaden.');
   if(kind==='event'&&new Date(p.date+'T'+p.start)<=new Date())fail('Välj en framtida tid för händelsen.');
   const rule=kind==='event'?{title:p.title.trim(),note:String(p.note||''),cancelled:0}:sundayRules(p.date,p.start,p.end,p.title.trim(),String(p.note||''));if(rule.cancelled)fail('Passet 16–18 är inställt första söndagen i månaden på grund av öppet hus.');
-  db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES(?,?,?,?,?,?,?,?,?)').run(p.date,p.start,p.end,rule.title,0,rule.note,0,kind,(p.extra_info||'').trim());return send(snapshot(user));
+  db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES(?,?,?,?,?,?,?,?,?)').run(p.date,rule.start||p.start,rule.end||p.end,rule.title,0,rule.note,0,kind,(p.extra_info||'').trim());return send(snapshot(user));
  }
  if(/^\/api\/slots\/\d+$/.test(url.pathname)&&['PATCH','DELETE'].includes(req.method)){
   const id=Number(url.pathname.split('/').pop()),p=req.method==='DELETE'?{cancelled:true}:await body(req);

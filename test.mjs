@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import {createMembers} from './members.mjs';
+import {checklistGroups} from './checklist.mjs';
 import {isAdmin,isSuperAdmin,canManageAccount,isGreen} from './roles.mjs';
 import {upgradeDefaultShifts} from './schedule-upgrade.mjs';
 import {createEmailSettings} from './email-settings.mjs';
@@ -106,7 +107,12 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const volunteerId=(await(await call('state','GET',null,vc)).json()).user.id;
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:true},vc)).status,403);
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
- let marked=(await marking.json()).users.find(u=>u.id===volunteerId);assert.equal(marked.green,true);assert.equal(marked.active,1);assert.equal(marked.completed_shifts,0);
+ let marked=(await marking.json()).users.find(u=>u.id===volunteerId);assert.equal(marked.green,false);assert.equal(marked.active,1);
+ for(const item of checklistGroups.flatMap(g=>g.items))assert.equal((await call('checklist','PATCH',{item_id:item.id,checked:true},vc)).status,200);
+ assert.equal((await(await call('state','GET',null,vc)).json()).user.green,true);
+ assert.equal((await call('checklist','PATCH',{item_id:'tour',checked:false},vc)).status,200);
+ assert.equal((await(await call('state','GET',null,vc)).json()).user.green,false);
+ assert.equal((await call('checklist','PATCH',{item_id:'tour',checked:true},vc)).status,200);assert.equal(marked.completed_shifts,0);
  let ownStats=(await(await call('state','GET',null,vc)).json());assert.equal(ownStats.user.green,true);assert.equal(ownStats.user.completed_shifts,0);assert.deepEqual(ownStats.users,[]);
  marking=await call('users/'+volunteerId,'PATCH',{green:false},ac);marked=(await marking.json()).users.find(u=>u.id===volunteerId);assert.equal(marked.green,false);assert.equal(marked.active,1);
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:'true'},ac)).status,400);
@@ -116,28 +122,30 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const previewData=await preview.json();assert.deepEqual(previewData.users.map(u=>u.green),[true,true]);assert.ok(!JSON.stringify(previewData).includes('Password'));
  assert.equal((await(await call('state','GET',null,ac)).json()).users.some(u=>u.email==='asa@example.se'),false);
  const imported=await call('users/import','POST',{csv:importCsv,green:false},ac);assert.equal(imported.status,200);
- const importedUsers=(await imported.json()).users;assert.equal(importedUsers.find(u=>u.email==='asa@example.se').green,false);assert.equal(importedUsers.find(u=>u.email==='orjan@example.se').green,true);
+ const importedUsers=(await imported.json()).users;assert.equal(importedUsers.find(u=>u.email==='asa@example.se').green,false);assert.equal(importedUsers.find(u=>u.email==='orjan@example.se').green,false);
  assert.equal(importedUsers.find(u=>u.email==='asa@example.se').name,'Åsa; Kattvän');
  const allGreen=await call('users/import','POST',{csv:'namn,e-post,lösenord\nGrupp,grupp@example.se,Password12345',green:true},ac);assert.equal(allGreen.status,200);assert.equal((await allGreen.json()).users.find(u=>u.email==='grupp@example.se').green_manual,true);
- const importedLogin=await call('login','POST',{email:'orjan@example.se',password:'Password67890'});assert.equal(importedLogin.status,200);assert.equal((await importedLogin.json()).user.green,true);
+ const importedLogin=await call('login','POST',{email:'orjan@example.se',password:'Password67890'});assert.equal(importedLogin.status,200);assert.equal((await importedLogin.json()).user.green,false);
  for(const csv of [importCsv,'namn;e-post;lösenord\nNy;new@example.se;Password12345\nFel;fel@example.se;kort','namn;e-post;lösenord\nNy;new@example.se;Password12345\nDublett;NEW@example.se;Password12345']){
   assert.equal((await call('users/import','POST',{csv,green:false},ac)).status,400);
   assert.equal((await(await call('state','GET',null,ac)).json()).users.some(u=>u.email==='new@example.se'),false);
  }
- // Completed shift totals: the 15/16 boundary, cancelled shifts and future shifts.
+ // Completed shift totals: 9/10 boundary, mandatory checklist, cancelled and future shifts.
  const fixtureDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));
  try{
  const insertSlot=fixtureDb.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled) VALUES(?,?,?,?,0,?,?)');
  const insertBooking=fixtureDb.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)');
  const addHistory=(date,cancelled=0)=>{const row=insertSlot.run(date,'08:00','12:00','Historiktest','',cancelled);insertBooking.run(uid,row.lastInsertRowid)};
- for(let i=1;i<=15;i++)addHistory('2000-01-'+String(i).padStart(2,'0'));
+ for(let i=1;i<=9;i++)addHistory('2000-01-'+String(i).padStart(2,'0'));
  addHistory('2000-01-20',1);addHistory('2099-01-20');
- let stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,15);assert.equal(stats.users.find(u=>u.id===uid).green,false);assert.equal(stats.users.find(u=>u.id===uid).inactive_month,true);
+ let stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,9);assert.equal(stats.users.find(u=>u.id===uid).green,false);assert.equal(stats.users.find(u=>u.id===uid).inactive_month,true);
  assert.equal(stats.users.find(u=>u.id===stats.user.id).completed_shifts,0);
- addHistory('2000-01-16');
- stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,16);assert.equal(stats.users.find(u=>u.id===uid).green,true);
+ addHistory('2000-01-10');
+ let waiting=await(await call('state','GET',null,ac)).json();assert.equal(waiting.users.find(u=>u.id===uid).green,false);
+ for(const item of checklistGroups.flatMap(g=>g.items))fixtureDb.prepare('INSERT OR IGNORE INTO checklist_progress(user_id,item_id) VALUES(?,?)').run(uid,item.id);
+ stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,10);assert.equal(stats.users.find(u=>u.id===uid).green,true);
  const automatic=await call('users/'+uid,'PATCH',{green:false},ac);assert.equal((await automatic.json()).users.find(u=>u.id===uid).green,true);
- const historyLogin=await call('login','POST',{email:'test@example.se',password:'password12345'});assert.equal(historyLogin.status,200);const historyUser=(await historyLogin.json()).user;assert.equal(historyUser.completed_shifts,16);assert.equal(historyUser.green,true);
+ const historyLogin=await call('login','POST',{email:'test@example.se',password:'password12345'});assert.equal(historyLogin.status,200);const historyUser=(await historyLogin.json()).user;assert.equal(historyUser.completed_shifts,10);assert.equal(historyUser.green,true);
  }finally{fixtureDb.close()}
  const results=await Promise.all([call('bookings','POST',{slotId:slot.id},vc),call('bookings','POST',{slotId:slot.id,userId:uid},ac)]);assert.deepEqual(results.map(x=>x.status).sort(),[200,200]);
  let s=await(await call('state','GET',null,ac)).json();assert.equal(s.slots.find(x=>x.id===slot.id).booked,2);const booking=s.bookings.find(b=>b.slot_id===slot.id);
@@ -173,6 +181,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const eventResponse=await call('slots','POST',eventPayload,ac);assert.equal(eventResponse.status,200);const eventId=(await eventResponse.json()).slots.find(s=>s.title==='Veterinärbesök').id;
  assert.equal((await call('bookings','POST',{slotId:eventId},vc)).status,200);assert.equal((await call('bookings','POST',{slotId:eventId,userId:uid},ac)).status,200);
  // Information is private, editable by admins, and persisted in the database.
+ for(const item of checklistGroups.flatMap(g=>g.items))await call('checklist','PATCH',{item_id:item.id,checked:false},vc);
  // Checklist progress belongs to the signed-in person and persists across restart.
  assert.equal((await call('checklist','PATCH',{item_id:'sanitation',checked:true})).status,401);
  assert.equal((await call('checklist','PATCH',{item_id:'unknown',checked:true},vc)).status,400);
@@ -263,13 +272,13 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const firstSunday='2099-02-01',laterSunday='2099-02-08';
  // February 1, 2099 is a Sunday: open house blocks afternoon bookings.
  assert.equal(new Date(firstSunday+'T12:00').getDay(),0);
- assert.equal((await call('slots','POST',{date:firstSunday,start:'16:00',end:'18:00',title:'Eftermiddagspass'},ac)).status,400);
+ assert.equal((await call('slots','POST',{date:firstSunday,start:'16:00',end:'18:00',title:'Eftermiddagspass'},ac)).status,200);
  for(const date of [firstSunday,laterSunday]){
   const response=await call('slots','POST',{date,start:'18:00',end:'20:00',title:'Kvällspass'},ac);assert.equal(response.status,200);
   const social=(await response.json()).slots.find(x=>x.date===date&&x.start==='18:00');assert.equal(social.title,'Socialiseringsgruppen');assert.match(social.note,/socialiseringsträning/);assert.equal(social.minimum_staff,2);
  }
  const seeded=(await(await call('state','GET',null,ac)).json()).slots.filter(x=>x.date!==firstSunday&&x.date!==laterSunday&&x.title!=='Testpass');
- for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='18:00')assert.equal(item.title,'Socialiseringsgruppen');if(Number(item.date.slice(-2))<=7&&item.start==='16:00'){assert.equal(item.cancelled,1);assert.equal((await call('bookings','POST',{slotId:item.id},vc)).status,409)}}}
+ for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='16:00'){assert.equal(item.title,'Socialiseringsgruppen');assert.equal(item.end,'20:00');assert.equal(item.cancelled,0)}assert.notEqual(item.start,'18:00')}}
  // Recurring booking API only allows booking for self unless actor is admin.
  const seriesPayload={date:'2098-06-03',start:'06:00',end:'07:00',title:'Serietest',kind:'regular'};
  const seriesFirst=(await(await call('slots','POST',seriesPayload,ac)).json()).slots.find(s=>s.title==='Serietest');
@@ -289,7 +298,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const extraState=await(await call('state','GET',null,vc)).json(),createdExtras=extraState.slots.filter(s=>s.title==='Extra serie');assert.equal(createdExtras.length,3);assert.ok(createdExtras.every(s=>s.extra_info==='Ta med frågor'&&s.booked===0));
  assert.equal((await(await call('slots/series','POST',{...extraSeries,preview:true},ac)).json()).rows.filter(r=>r.status==='new').length,0);
  assert.equal((await call('slots/series','POST',{...extraSeries,key:extraPlan.key},newAdminCookie)).status,409);
- const sundaySeries=await(await call('slots/series','POST',{...extraSeries,date:firstSunday,until:firstSunday,start:'16:00',end:'18:00',preview:true},ac)).json();assert.equal(sundaySeries.rows[0].status,'cancelled');
+ const sundaySeries=await(await call('slots/series','POST',{...extraSeries,date:firstSunday,until:firstSunday,start:'16:00',end:'18:00',preview:true},ac)).json();assert.notEqual(sundaySeries.rows[0].status,'cancelled');
  const unified={...memberPayload,name:'Gemensam volontär',email:'unified@example.se',member_number:'UNIFIED',account:{role:'volunteer',password:'UnifiedPassword123',active:true,green:true}};
  assert.equal((await call('volunteers','POST',unified,vc)).status,403);
  const unifiedResponse=await call('volunteers','POST',unified,newAdminCookie);assert.equal(unifiedResponse.status,200);const unifiedState=await unifiedResponse.json(),unifiedProfile=unifiedState.members.find(m=>m.email===unified.email);assert.ok(unifiedProfile.user_id);assert.ok(unifiedState.users.some(u=>u.id===unifiedProfile.user_id&&u.name===unified.name));assert.ok(!JSON.stringify(unifiedState).includes('UnifiedPassword123'));
@@ -409,7 +418,7 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa, ändra och ställa in pass|Superadmin:|id="edit-info"|Samla in uppgifter|Nyheter: publicera/);assert.match(elements.get('#app').innerHTML,/Nyheter ovanför kalendern/);assert.match(elements.get('#app').innerHTML,/Prenumerera på mina pass/);
  fixture.checklist={groups:[{title:'Lära känna arbetet',items:[{id:'sanitation',text:'Genomgång av sanering'}]}],checked_items:['sanitation']};
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/Min första tid på katthemmet/);
- fixture.user.green=true;vm.runInContext('render()',context);assert.doesNotMatch(elements.get('#app').innerHTML,/onboarding-checklist|data-checklist-item/);assert.match(elements.get('#app').innerHTML,/Manual för volontärer/);
+ fixture.user.green=true;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/onboarding-checklist|data-checklist-item/);assert.match(elements.get('#app').innerHTML,/Manual för volontärer/);
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/data-checklist-item="sanitation" checked/);
 
 
@@ -470,7 +479,7 @@ test('Roller: admin och superadmin delar verksamhetsbehörighet men kontoskydd s
  assert.equal(canManageAccount(admin,volunteer),true);assert.equal(canManageAccount(admin,admin),false);assert.equal(canManageAccount(admin,superadmin),false);assert.equal(canManageAccount(superadmin,admin),true);assert.equal(canManageAccount(superadmin,superadmin),true);
 });
 
-test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},15),false);assert.equal(isGreen({role:'volunteer'},16),true)});
+test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},9,true),false);assert.equal(isGreen({role:'volunteer'},10,true),true);assert.equal(isGreen({role:'volunteer'},100,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,true),true)});
 
 test('Medlemmar: profiler, status, styrelseansvar, unika medlemsnummer och samtidighet',()=>{
  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,email TEXT UNIQUE)');try{
