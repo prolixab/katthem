@@ -18,6 +18,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  CREATE TABLE IF NOT EXISTS portal_sessions(token TEXT PRIMARY KEY,source TEXT NOT NULL,user_id INTEGER NOT NULL,source_token TEXT NOT NULL,selected TEXT NOT NULL,expires INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS shadows(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,local_id INTEGER NOT NULL,PRIMARY KEY(source,user_id,target),UNIQUE(target,local_id));`);
  registry.prepare('INSERT OR IGNORE INTO shelters VALUES(?,?)').run(primary,'Huskvarna / Jönköping');
+ registry.exec('CREATE TABLE IF NOT EXISTS shadow_profile_sync(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,values_json TEXT NOT NULL,PRIMARY KEY(source,user_id,target))');
  const rates=new Map();
  const workers=new Map(),starts=new Map(),secret=randomBytes(32).toString('hex');let closing=false;
  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
@@ -47,19 +48,23 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  }
  function access(p,target){if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
  function metadata(p,selected){return {selected,global_superadmin:p.global,can_transfer:houses().filter(h=>['admin','superadmin'].includes(access(p,h.id))).length>=2,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
- async function localSession(p,target){
-  if(target===p.source)return p.source_token;
-  const role=access(p,target);if(!role)fail('Du saknar åtkomst till katthemmet.',403);
+ async function ensureShadow(p,target,role){
   const w=await worker(target);let shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
-  if(!shadow){
-   // A linked access identity is separate from local volunteers, including matching e-mail addresses.
-   const email=w.db.prepare('SELECT 1 FROM users WHERE email=?').get(p.user.email)?'portal-'+randomBytes(16).toString('hex')+'@access.invalid':p.user.email;const salt=randomBytes(16).toString('hex'),password=salt+':'+scryptSync(randomBytes(32).toString('hex'),salt,64).toString('hex');
-   const id=Number(w.db.prepare('INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)').run(p.user.name,email,password,role,Date.now()).lastInsertRowid);
-   registry.prepare('INSERT INTO shadows VALUES(?,?,?,?)').run(p.source,p.user_id,target,id);shadow={local_id:id};
-  }
-  w.db.prepare('UPDATE users SET role=?,active=1 WHERE id=?').run(role,shadow.local_id);
-  const token=randomBytes(32).toString('hex');w.db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());w.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token,shadow.local_id,Math.min(p.expires,Date.now()+3600000));return token;
+  if(!shadow){const email=w.db.prepare('SELECT 1 FROM users WHERE email=?').get(p.user.email)?'portal-'+randomBytes(16).toString('hex')+'@access.invalid':p.user.email;const salt=randomBytes(16).toString('hex'),password=salt+':'+scryptSync(randomBytes(32).toString('hex'),salt,64).toString('hex');const id=Number(w.db.prepare('INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)').run(p.user.name,email,password,role,Date.now()).lastInsertRowid);registry.prepare('INSERT INTO shadows VALUES(?,?,?,?)').run(p.source,p.user_id,target,id);registry.prepare('DELETE FROM shadow_profile_sync WHERE source=? AND user_id=? AND target=?').run(p.source,p.user_id,target);shadow={local_id:id}}
+  w.db.prepare('UPDATE users SET name=?,role=?,active=1 WHERE id=?').run(p.user.name,role,shadow.local_id);
+  const account=w.db.prepare('SELECT name,email FROM users WHERE id=?').get(shadow.local_id);
+  if(!w.db.prepare('SELECT id FROM member_profiles WHERE user_id=?').get(shadow.local_id))w.db.prepare('INSERT INTO member_profiles(name,email,user_id,shelter,updated_at) VALUES(?,?,?,?,?)').run(account.name,account.email,shadow.local_id,house(target).name,Date.now());
+  const explicit=registry.prepare('SELECT 1 FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
+  if(explicit){const source=await worker(p.source),profile=source.db.prepare('SELECT board_role,board_title,phone,messenger_url,animal_care_trained,status FROM member_profiles WHERE user_id=?').get(p.user_id);if(profile){
+   const current=w.db.prepare('SELECT * FROM member_profiles WHERE user_id=?').get(shadow.local_id),saved=registry.prepare('SELECT values_json FROM shadow_profile_sync WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);const last=saved?JSON.parse(saved.values_json):{},updates={};
+   for(const field of ['phone','messenger_url','animal_care_trained'])if((Object.hasOwn(last,field)&&current[field]===last[field])||(!Object.hasOwn(last,field)&&!current[field])){updates[field]=profile[field];last[field]=profile[field]}
+   if((Object.hasOwn(last,'board_role')&&current.board_role===last.board_role&&current.board_title===last.board_title)||(!Object.hasOwn(last,'board_role')&&current.board_role==='none'&&!current.board_title)){updates.board_role=profile.status==='ended'?'none':profile.board_role;updates.board_title=updates.board_role==='other'?profile.board_title:'';last.board_role=updates.board_role;last.board_title=updates.board_title}
+   const fields=Object.keys(updates).filter(k=>updates[k]!==current[k]);if(fields.length)w.db.prepare('UPDATE member_profiles SET '+fields.map(k=>k+'=?').join(',')+',revision=revision+1,updated_at=? WHERE id=?').run(...fields.map(k=>updates[k]),Date.now(),current.id);
+   registry.prepare('INSERT INTO shadow_profile_sync VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET values_json=excluded.values_json').run(p.source,p.user_id,target,JSON.stringify(last));
+  }}return shadow.local_id;
  }
+ async function syncGrantedProfiles(target){for(const g of registry.prepare('SELECT * FROM grants WHERE target=?').all(target)){const source=await worker(g.source),user=source.db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(g.user_id);if(user&&!registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(g.source,g.user_id))await ensureShadow({source:g.source,user_id:g.user_id,user},target,g.source===primary&&user.role==='superadmin'?'superadmin':g.role)}}
+ async function localSession(p,target){if(target===p.source)return p.source_token;const role=access(p,target);if(!role)fail('Du saknar åtkomst till katthemmet.',403);const id=await ensureShadow(p,target,role),w=await worker(target);const token=randomBytes(32).toString('hex');w.db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());w.db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(token,id,Math.min(p.expires,Date.now()+3600000));return token}
  async function reconcile(){for(const link of registry.prepare('SELECT * FROM shadows').all()){const source=await worker(link.source),target=await worker(link.target),user=source.db.prepare('SELECT * FROM users WHERE id=?').get(link.user_id);const role=user?.active?access({source:link.source,user_id:link.user_id,user,global:link.source===primary&&user.role==='superadmin'},link.target):null;target.db.prepare('UPDATE users SET active=?,role=? WHERE id=?').run(role?1:0,role||'volunteer',link.local_id);if(!role)target.db.prepare('DELETE FROM sessions WHERE user_id=?').run(link.local_id)}}
  const publicList=()=>({shelters:houses(),default_shelter:primary});
  async function bytes(req){const chunks=[];let size=0;for await(const b of req){size+=b.length;if(size>600000)fail('För stor begäran.',413);chunks.push(b)}return Buffer.concat(chunks)}
@@ -105,7 +110,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     if(url.pathname==='/api/portal/manage/grants'&&req.method==='POST'){
      const fields=json(payload);if(!house(fields.source)||!house(fields.target)||!Number.isInteger(fields.user_id)||!['admin','volunteer'].includes(fields.role)||typeof fields.enabled!=='boolean'||fields.source===fields.target)fail('Välj person, annat katthem och behörighet.');
      const source=await worker(fields.source),u=source.db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(fields.user_id);if(!u||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(fields.source,fields.user_id))fail('Välj ett aktivt ordinarie konto.');
-     if(fields.enabled)registry.prepare('INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET role=excluded.role').run(fields.source,fields.user_id,fields.target,fields.role);
+     if(fields.enabled){registry.prepare('INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET role=excluded.role').run(fields.source,fields.user_id,fields.target,fields.role);await syncGrantedProfiles(fields.target)}
      else{registry.prepare('DELETE FROM grants WHERE source=? AND user_id=? AND target=?').run(fields.source,fields.user_id,fields.target);const shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(fields.source,fields.user_id,fields.target);if(shadow){const w=await worker(fields.target);w.db.prepare('DELETE FROM sessions WHERE user_id=?').run(shadow.local_id);w.db.prepare('UPDATE users SET active=0 WHERE id=?').run(shadow.local_id)}}return send({ok:true});
     }
     fail('Funktionen finns inte.',404);
@@ -128,6 +133,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
      if(target!==p.source&&/^\/api\/users\/\d+/.test(url.pathname)&&Number(url.pathname.split('/')[3])===registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id)fail('Hantera ditt ordinarie konto i ditt hemmakatthem.');
     }
    }else target=primary;
+   if(p&&access(p,target))await syncGrantedProfiles(target);
    const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
    const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
    if(result.ok&&write&&/^\/api\/(users|volunteers|members)(\/|$)/.test(url.pathname))await reconcile();
