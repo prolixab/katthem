@@ -4,7 +4,7 @@ export function exportAttachments(db){
  db.exec('BEGIN');try{
  const definitions=[
  ['volontarer.csv','member_profiles',['id','user_id','name','email','phone','address','member_number','member_since','status','board_role','board_title','responsibilities','note','revision','updated_at','birth_date','is_member','shelter','animal_care_trained','messenger_url']],
- ['konton.csv','users',['id','name','email','role','active','green_manual','created_at']],
+ ['konton.csv','users',['id','name','email','role','active','green_manual','created_at',...(db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='carried_shifts')?['carried_shifts']:[])]],
  ['schema.csv','slots',['id','date','start','end','title','capacity','note','cancelled','kind','extra_info']],
  ['bokningar.csv','bookings',['id','user_id','slot_id']],
  ['praktisk-info.csv','volunteer_info',['id','location']],

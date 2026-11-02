@@ -1,3 +1,5 @@
+import {createPortalNews} from './portal-news.mjs';
+import {createVolunteerTransfers} from './volunteer-transfer.mjs';
 import http from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -35,14 +37,16 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  await worker(primary);
  // Start every configured shelter so reminders and CSV jobs run independently.
  for(const h of houses())await worker(h.id);
+ const portalNews=createPortalNews(registry,{shelter:house});
+ const transfers=createVolunteerTransfers(registry,{shelter:house,dbPath:id=>path.join(folder(id),'katthem.sqlite')});
  async function principal(token){
   const session=registry.prepare('SELECT * FROM portal_sessions WHERE token=? AND expires>?').get(token||'',Date.now());if(!session)return null;
   const w=await worker(session.source);const user=w.db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.id=?').get(session.source_token,Date.now(),session.user_id);
-  if(!user||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(session.source,user?.id??-1))return null;
+  if(!user||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(session.source,user?.id??-1)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(session.source,user?.id??-1))return null;
   return {...session,user,global:session.source===primary&&user.role==='superadmin'};
  }
  function access(p,target){if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
- function metadata(p,selected){return {selected,global_superadmin:p.global,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
+ function metadata(p,selected){return {selected,global_superadmin:p.global,can_transfer:houses().filter(h=>['admin','superadmin'].includes(access(p,h.id))).length>=2,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
  async function localSession(p,target){
   if(target===p.source)return p.source_token;
   const role=access(p,target);if(!role)fail('Du saknar åtkomst till katthemmet.',403);
@@ -78,8 +82,17 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }else if(url.pathname==='/api/portal/select'&&req.method==='POST'){
     if(!p)fail('Logga in för att fortsätta.',401);target=json(payload).shelter;if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);
     registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(target,incomingToken);return send({ok:true});
+   }else if(/^\/api\/portal\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){
+    if(!p)fail('Logga in för att fortsätta.',401);if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);const fields=json(payload);portalNews.dismiss(target,p,Number(url.pathname.split('/')[4]),fields.revision);return send({ok:true});
+   }else if(url.pathname.startsWith('/api/portal/transfers')){
+    if(!p)fail('Logga in för att fortsätta.',401);const allowed=houses().filter(h=>['admin','superadmin'].includes(access(p,h.id)));if(allowed.length<2)fail('Du behöver adminbehörighet i båda katthemmen.',403);
+    if(url.pathname==='/api/portal/transfers'&&req.method==='GET'){const users=[];for(const h of allowed){const w=await worker(h.id);for(const u of w.db.prepare("SELECT id,name,email,role,active FROM users WHERE active=1 AND role='volunteer' ORDER BY name").all())if(!registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(h.id,u.id)&&!registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(h.id,u.id))users.push({...u,source:h.id})}return send({shelters:allowed,users})}
+    if(['/api/portal/transfers/preview','/api/portal/transfers'].includes(url.pathname)&&req.method==='POST'){const fields=json(payload),ids=allowed.map(h=>h.id);if(!ids.includes(fields.source)||!ids.includes(fields.target))fail('Du behöver adminbehörighet i båda katthemmen.',403);const extra=registry.prepare('SELECT target FROM shadows WHERE source=? AND user_id=? AND target<>?').all(fields.source,fields.user_id,fields.target);if(extra.some(e=>!ids.includes(e.target)))fail('Personen har kopplingar till andra katthem. Be superadmin hjälpa till med flytten.',403);await worker(fields.source);await worker(fields.target);const safe={...fields,volunteers_only:true,allowed_homes:ids};if(url.pathname.endsWith('/preview'))return send(transfers.preview(safe));const result=transfers.move(safe);await reconcile();return send(result)}
+    fail('Funktionen finns inte.',404);
    }else if(url.pathname.startsWith('/api/portal/manage')){
     if(!p)fail('Logga in för att fortsätta.',401);if(!p.global)fail('Endast superadmin kan hantera katthem och åtkomst.',403);
+    if(url.pathname==='/api/portal/manage/news'&&req.method==='POST')return send({id:portalNews.save(null,json(payload))});
+    if(/^\/api\/portal\/manage\/news\/\d+$/.test(url.pathname)&&['PUT','DELETE'].includes(req.method)){const fields=json(payload),id=Number(url.pathname.split('/').pop());if(req.method==='DELETE')portalNews.remove(id,fields.revision);else portalNews.save(id,fields);return send({ok:true})}
     if(url.pathname==='/api/portal/manage'&&req.method==='GET'){
      const users=[];for(const h of houses()){const w=await worker(h.id);for(const u of w.db.prepare('SELECT id,name,email,role,active FROM users ORDER BY name').all()){if(!registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(h.id,u.id))users.push({...u,source:h.id})}}
      return send({shelters:houses(),users,grants:registry.prepare('SELECT * FROM grants ORDER BY source,user_id,target').all()});
@@ -88,6 +101,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
      const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||typeof fields.address!=='string'||fields.address.length>4000)fail('Ange katthemmets namn och adress.');if(houses().length>=50)fail('Högst 50 katthem kan läggas till.');
      const id=randomBytes(12).toString('hex');registry.prepare('INSERT INTO shelters VALUES(?,?)').run(id,fields.name.trim());try{const w=await worker(id);w.db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(fields.address.trim())}catch(e){registry.prepare('DELETE FROM shelters WHERE id=?').run(id);throw e}return send({id},201);
     }
+    if(['/api/portal/manage/transfers/preview','/api/portal/manage/transfers'].includes(url.pathname)&&req.method==='POST'){const fields=json(payload);if(!house(fields.source)||!house(fields.target))fail('Välj katthem.');await worker(fields.source);await worker(fields.target);if(url.pathname.endsWith('/preview'))return send(transfers.preview(fields));const result=transfers.move(fields);await reconcile();return send(result)}
     if(url.pathname==='/api/portal/manage/grants'&&req.method==='POST'){
      const fields=json(payload);if(!house(fields.source)||!house(fields.target)||!Number.isInteger(fields.user_id)||!['admin','volunteer'].includes(fields.role)||typeof fields.enabled!=='boolean'||fields.source===fields.target)fail('Välj person, annat katthem och behörighet.');
      const source=await worker(fields.source),u=source.db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(fields.user_id);if(!u||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(fields.source,fields.user_id))fail('Välj ett aktivt ordinarie konto.');
@@ -103,7 +117,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
      if(!p)fail('Logga in för att fortsätta.',401);
      if(url.pathname==='/api/logout'&&req.method==='POST'){const w=await worker(p.source);w.db.prepare('DELETE FROM sessions WHERE token=?').run(p.source_token);registry.prepare('DELETE FROM portal_sessions WHERE token=?').run(incomingToken);res.setHeader('Set-Cookie',cookie('',0));return send({ok:true})}
      if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);
-     if(write&&(/^\/api\/users(?:\/|$)/.test(url.pathname)||/^\/api\/volunteers(?:\/|$)/.test(url.pathname))){const fields=json(payload),tw=await worker(target),id=Number(url.pathname.split('/')[3])||-1;const localId=url.pathname.startsWith('/api/volunteers/')?tw.db.prepare('SELECT user_id FROM member_profiles WHERE id=?').get(id)?.user_id:id;const managed=registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,localId??-1);const existing=localId?tw.db.prepare('SELECT * FROM users WHERE id=?').get(localId):null;const requestedRole=fields.account?.role||fields.role;
+     if(write&&(/^\/api\/users(?:\/|$)/.test(url.pathname)||/^\/api\/volunteers(?:\/|$)/.test(url.pathname))){const fields=json(payload),tw=await worker(target),id=Number(url.pathname.split('/')[3])||-1;const localId=url.pathname.startsWith('/api/volunteers/')?tw.db.prepare('SELECT user_id FROM member_profiles WHERE id=?').get(id)?.user_id:id;const managed=registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,localId??-1);const existing=localId?tw.db.prepare('SELECT * FROM users WHERE id=?').get(localId):null;const requestedRole=fields.account?.role||fields.role;if(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,localId??-1))fail('Kontot har flyttats till ett annat katthem och kan inte återaktiveras här.',403);
       if(managed){const a=fields.account||fields;if((requestedRole&&requestedRole!==existing.role)||(a.active!==undefined&&a.active!==Boolean(existing.active))||a.password)fail('Ändra tilldelad åtkomst under Hantera katthem och åtkomst.',403)}
       if(target!==primary&&requestedRole==='superadmin'&&(!managed||existing.role!=='superadmin'))fail('Systemets superadmin skapas i det ursprungliga katthemmet.',403)
      }
@@ -119,10 +133,10 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(result.ok&&write&&/^\/api\/(users|volunteers|members)(\/|$)/.test(url.pathname))await reconcile();
    const contentType=result.headers.get('content-type')||'',buffer=Buffer.from(await result.arrayBuffer());
    if(url.pathname==='/api/login'&&result.ok){
-    const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
-    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users)u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));data.portal=metadata(p,target);return send(data);
+    const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,data.user.id)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
+    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);return send(data);
    }
-   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users)u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));data.portal=metadata(p,target);data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
+   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
    for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
   }catch(e){if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}
  });
