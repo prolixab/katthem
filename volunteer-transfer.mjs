@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash,randomBytes} from 'node:crypto';
 export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.now()}){
  registry.exec(`CREATE TABLE IF NOT EXISTS volunteer_lineage(home TEXT NOT NULL,user_id INTEGER NOT NULL,person TEXT NOT NULL,PRIMARY KEY(home,user_id));CREATE TABLE IF NOT EXISTS retired_accounts(home TEXT NOT NULL,user_id INTEGER NOT NULL,PRIMARY KEY(home,user_id));CREATE TABLE IF NOT EXISTS volunteer_transfers(id INTEGER PRIMARY KEY,source TEXT NOT NULL,source_id INTEGER NOT NULL,target TEXT NOT NULL,target_id INTEGER NOT NULL,completed INTEGER NOT NULL,created_at INTEGER NOT NULL);`);
+ registry.exec('CREATE TABLE IF NOT EXISTS volunteer_credits(person TEXT PRIMARY KEY,completed INTEGER NOT NULL DEFAULT 0)');
  let extras=[];
  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
  function attached(p,action){
@@ -17,13 +18,15 @@ export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.n
   const person=registry.prepare('SELECT person FROM volunteer_lineage WHERE home=? AND user_id=?').get(p.source,user.id)?.person;
   const ownShadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,user.id,p.target);
   const prior=person?registry.prepare('SELECT user_id FROM volunteer_lineage WHERE person=? AND home=? AND user_id NOT IN (SELECT local_id FROM shadows WHERE target=?) ORDER BY user_id LIMIT 1').get(person,p.target,p.target):null;
-  const targetId=prior?.user_id??ownShadow?.local_id??null;
+  const candidateId=prior?.user_id??ownShadow?.local_id??null;
+  const purged=candidateId&&registry.prepare("SELECT 1 FROM move_target.sqlite_master WHERE name='engagements'").get()&&registry.prepare("SELECT 1 FROM move_target.engagements WHERE user_id=? AND status='purged'").get(candidateId);
+  const targetId=purged?null:candidateId;
   const target=targetId?registry.prepare('SELECT * FROM move_target.users WHERE id=?').get(targetId):null;
   if(target?.role==='superadmin')fail('Målkontot är superadmin och kan inte ersättas.');
   if(registry.prepare('SELECT id FROM move_target.users WHERE lower(email)=lower(?) AND id<>?').get(user.email,targetId??-1))fail('E-postadressen finns redan i målkatthemmet på ett annat konto. Kontona måste kontrolleras före flytt.',409);
   if(p.volunteers_only&&(user.role!=='volunteer'||target&&target.role!=='volunteer'))fail('Admin kan bara flytta volontärer utan administratörsbehörighet. Be superadmin hjälpa till.',403);
   const targetProfile=targetId?registry.prepare('SELECT * FROM move_target.member_profiles WHERE user_id=?').get(targetId):null;
-  if(registry.prepare('SELECT id FROM move_target.member_profiles WHERE (lower(email)=lower(?) OR (?<>\'\' AND member_number=?)) AND id<>?').get(profile.email,profile.member_number,profile.member_number,targetProfile?.id??-1))fail('E-post eller medlemsnummer används av en annan profil i målkatthemmet.',409);
+  if(registry.prepare('SELECT id FROM move_target.member_profiles WHERE lower(email)=lower(?) AND id<>?').get(profile.email,targetProfile?.id??-1))fail('E-post används av en annan profil i målkatthemmet.',409);
   const time=now(),pending=[...registry.prepare('SELECT s.id,s.date,s.start,s.end,s.title FROM move_source.bookings b JOIN move_source.slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(user.id).map(s=>({...s,home:p.source,home_name:shelter(p.source).name}))];
   for(const e of extras)pending.push(...registry.prepare('SELECT s.id,s.date,s.start,s.end,s.title FROM '+e.alias+'.bookings b JOIN '+e.alias+'.slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(e.local_id).map(s=>({...s,home:e.target,home_name:shelter(e.target).name})));
   const future=pending.filter(s=>new Date(s.date+'T'+s.start)>time).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
@@ -43,7 +46,7 @@ export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.n
    else registry.prepare("UPDATE move_target.users SET name=?,email=?,password=?,role='volunteer',active=1,green_manual=?,created_at=? WHERE id=?").run(x.user.name,x.user.email,x.user.password,x.user.green_manual,now(),targetId);
    registry.prepare('INSERT OR IGNORE INTO volunteer_lineage VALUES(?,?,?)').run(p.target,targetId,person);
    // Count distinct completed shifts across all known homes. No booking is copied between schedules.
-   const locations=registry.prepare('SELECT home,user_id FROM volunteer_lineage WHERE person=?').all(person);let total=0;
+   const locations=registry.prepare('SELECT home,user_id FROM volunteer_lineage WHERE person=?').all(person);let total=registry.prepare('SELECT completed FROM volunteer_credits WHERE person=?').get(person)?.completed||0;
    for(const home of new Set(locations.map(v=>v.home))){const alias=home===p.source?'move_source':home===p.target?'move_target':'move_history';const history=alias==='move_history'?new DatabaseSync(dbPath(home),{readOnly:true}):null;try{const ids=locations.filter(v=>v.home===home).map(v=>v.user_id);const rows=(history||registry).prepare('SELECT DISTINCT s.id,s.date,s.end FROM '+(history?'':alias+'.')+'bookings b JOIN '+(history?'':alias+'.')+'slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);total+=rows.filter(s=>new Date(s.date+'T'+s.end)<=now()).length}finally{if(history)history.close()}}
    const targetActual=registry.prepare('SELECT s.date,s.end FROM move_target.bookings b JOIN move_target.slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(targetId).filter(s=>new Date(s.date+'T'+s.end)<=now()).length;
    registry.prepare('UPDATE move_target.users SET carried_shifts=? WHERE id=?').run(Math.max(0,total-targetActual),targetId);
@@ -51,6 +54,7 @@ export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.n
    if(x.targetProfile)registry.prepare('UPDATE move_target.member_profiles SET '+fields.map(k=>k+'=?').join(',')+',revision=revision+1,updated_at=? WHERE id=?').run(...values,now(),x.targetProfile.id);
    else registry.prepare('INSERT INTO move_target.member_profiles('+fields.join(',')+',user_id,updated_at) VALUES('+[...values,targetId,now()].map(()=>'?').join(',')+')').run(...values,targetId,now());
    registry.prepare('DELETE FROM move_target.checklist_progress WHERE user_id=?').run(targetId);
+   if(registry.prepare("SELECT 1 FROM move_target.sqlite_master WHERE name='engagements'").get()){registry.prepare("INSERT OR IGNORE INTO move_target.engagements(user_id,changed_at) VALUES(?,?)").run(targetId,now());registry.prepare("UPDATE move_target.engagements SET status='active',needs_intro=1,practical_completed=0,independent_approved=0,routine_version=0,routine_accepted_at=NULL,review_at=NULL,ended_at=NULL,purge_after=NULL,warning_at=NULL,hold_reason='',hold_until=NULL,revision=revision+1 WHERE user_id=?").run(targetId);}
    registry.prepare('DELETE FROM move_target.sessions WHERE user_id=?').run(targetId);registry.prepare('DELETE FROM move_target.password_resets WHERE user_id=?').run(targetId);registry.prepare('DELETE FROM move_target.calendar_subscriptions WHERE user_id=?').run(targetId);
    registry.prepare('UPDATE move_source.users SET active=0 WHERE id=?').run(x.user.id);registry.prepare("UPDATE move_source.member_profiles SET status='ended',revision=revision+1,updated_at=? WHERE user_id=?").run(now(),x.user.id);
    for(const table of ['sessions','password_resets','calendar_subscriptions'])registry.prepare('DELETE FROM move_source.'+table+' WHERE user_id=?').run(x.user.id);

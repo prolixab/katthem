@@ -1,3 +1,4 @@
+import {createPortalEngagement} from './portal-engagement.mjs';
 import {createPortalNews} from './portal-news.mjs';
 import {createVolunteerTransfers} from './volunteer-transfer.mjs';
 import http from 'node:http';
@@ -40,18 +41,21 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  for(const h of houses())await worker(h.id);
  const portalNews=createPortalNews(registry,{shelter:house});
  const transfers=createVolunteerTransfers(registry,{shelter:house,dbPath:id=>path.join(folder(id),'katthem.sqlite')});
+ const lifecycle=createPortalEngagement(registry,{workers,houses});
  async function principal(token){
   const session=registry.prepare('SELECT * FROM portal_sessions WHERE token=? AND expires>?').get(token||'',Date.now());if(!session)return null;
   const w=await worker(session.source);const user=w.db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1 AND u.id=?').get(session.source_token,Date.now(),session.user_id);
   if(!user||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(session.source,user?.id??-1)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(session.source,user?.id??-1))return null;
   return {...session,user,global:session.source===primary&&user.role==='superadmin'};
  }
- function access(p,target){if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
+ function access(p,target){const localId=target===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id;if(localId&&workers.get(target)?.db.prepare("SELECT 1 FROM engagements WHERE user_id=? AND status='purged'").get(localId))return null;if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
  function metadata(p,selected){return {selected,global_superadmin:p.global,can_transfer:houses().filter(h=>['admin','superadmin'].includes(access(p,h.id))).length>=2,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
  async function ensureShadow(p,target,role){
   const w=await worker(target);let shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
   if(!shadow){const email=w.db.prepare('SELECT 1 FROM users WHERE email=?').get(p.user.email)?'portal-'+randomBytes(16).toString('hex')+'@access.invalid':p.user.email;const salt=randomBytes(16).toString('hex'),password=salt+':'+scryptSync(randomBytes(32).toString('hex'),salt,64).toString('hex');const id=Number(w.db.prepare('INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)').run(p.user.name,email,password,role,Date.now()).lastInsertRowid);registry.prepare('INSERT INTO shadows VALUES(?,?,?,?)').run(p.source,p.user_id,target,id);registry.prepare('DELETE FROM shadow_profile_sync WHERE source=? AND user_id=? AND target=?').run(p.source,p.user_id,target);shadow={local_id:id}}
-  w.db.prepare('UPDATE users SET name=?,role=?,active=1 WHERE id=?').run(p.user.name,role,shadow.local_id);
+  if(w.db.prepare("SELECT 1 FROM engagements WHERE user_id=? AND status='purged'").get(shadow.local_id))return shadow.local_id;
+  const currentEmail=w.db.prepare('SELECT email FROM users WHERE id=?').get(shadow.local_id).email;const sharedEmail=w.db.prepare('SELECT 1 FROM users WHERE email=? AND id<>?').get(p.user.email,shadow.local_id)?currentEmail:p.user.email;
+  w.db.prepare('UPDATE users SET name=?,email=?,role=?,active=1 WHERE id=?').run(p.user.name,sharedEmail,role,shadow.local_id);
   const account=w.db.prepare('SELECT name,email FROM users WHERE id=?').get(shadow.local_id);
   if(!w.db.prepare('SELECT id FROM member_profiles WHERE user_id=?').get(shadow.local_id))w.db.prepare('INSERT INTO member_profiles(name,email,user_id,shelter,updated_at) VALUES(?,?,?,?,?)').run(account.name,account.email,shadow.local_id,house(target).name,Date.now());
   const explicit=registry.prepare('SELECT 1 FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
@@ -77,13 +81,15 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(write&&req.headers.origin&&req.headers.origin!==origin)fail('Begäran blockerades.',403);
    if(write&&['/api/login','/api/password-reset/request','/api/password-reset/confirm'].includes(url.pathname)){const family=url.pathname==='/api/login'?'login':'reset',key=family+':'+req.socket.remoteAddress;let rate=rates.get(key);if(!rate||rate.until<Date.now()){rate={count:0,until:Date.now()+60000};rates.set(key,rate)}if(++rate.count>(family==='login'?15:10))fail('För många försök. Vänta en minut.',429)}
    const incomingToken=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('portal_session='))?.slice(15);
-   let p=await principal(incomingToken),target=p?.selected||primary,token='';let payload=write?await bytes(req):null;
+   let p=await principal(incomingToken),target=p?.selected||primary,token='';if(p&&!access(p,target)){target=houses().find(h=>access(p,h.id))?.id||target;registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(target,incomingToken);}let payload=write?await bytes(req):null;
    const requested=req.headers['x-katthem']||url.searchParams.get('shelter');
    if(requested)target=String(requested);
    const cookie=(value,max=86400)=>'portal_session='+value+'; HttpOnly; SameSite=Strict; Path=/; Max-Age='+max+(env.NODE_ENV==='production'?'; Secure':'');
    if(url.pathname==='/api/portal'&&req.method==='GET')return send(publicList());
    if(url.pathname==='/api/login'&&req.method==='POST'){
     const fields=json(payload);target=fields.portal_shelter||primary;if(!house(target))fail('Välj ett katthem.');payload=Buffer.from(JSON.stringify({email:fields.email,password:fields.password}));
+   }else if(url.pathname==='/api/portal/engagement'&&req.method==='PATCH'){
+    if(!p||!access(p,target))fail('Logga in och välj ett katthem.',403);const localId=target===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id;if(!localId)fail('Öppna katthemmet först.');return send(lifecycle.update(target,localId,json(payload),{self:true}));
    }else if(url.pathname==='/api/portal/select'&&req.method==='POST'){
     if(!p)fail('Logga in för att fortsätta.',401);target=json(payload).shelter;if(!house(target)||!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);
     registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(target,incomingToken);return send({ok:true});
@@ -110,7 +116,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     if(url.pathname==='/api/portal/manage/grants'&&req.method==='POST'){
      const fields=json(payload);if(!house(fields.source)||!house(fields.target)||!Number.isInteger(fields.user_id)||!['admin','volunteer'].includes(fields.role)||typeof fields.enabled!=='boolean'||fields.source===fields.target)fail('Välj person, annat katthem och behörighet.');
      const source=await worker(fields.source),u=source.db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(fields.user_id);if(!u||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(fields.source,fields.user_id))fail('Välj ett aktivt ordinarie konto.');
-     if(fields.enabled){registry.prepare('INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET role=excluded.role').run(fields.source,fields.user_id,fields.target,fields.role);await syncGrantedProfiles(fields.target)}
+     if(fields.enabled){const old=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(fields.source,fields.user_id,fields.target);if(old){const targetWorker=await worker(fields.target);if(targetWorker.db.prepare("SELECT 1 FROM engagements WHERE user_id=? AND status='purged'").get(old.local_id)){registry.prepare('DELETE FROM shadows WHERE source=? AND user_id=? AND target=?').run(fields.source,fields.user_id,fields.target);registry.prepare('DELETE FROM shadow_profile_sync WHERE source=? AND user_id=? AND target=?').run(fields.source,fields.user_id,fields.target);}}registry.prepare('INSERT INTO grants VALUES(?,?,?,?) ON CONFLICT(source,user_id,target) DO UPDATE SET role=excluded.role').run(fields.source,fields.user_id,fields.target,fields.role);await syncGrantedProfiles(fields.target)}
      else{registry.prepare('DELETE FROM grants WHERE source=? AND user_id=? AND target=?').run(fields.source,fields.user_id,fields.target);const shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(fields.source,fields.user_id,fields.target);if(shadow){const w=await worker(fields.target);w.db.prepare('DELETE FROM sessions WHERE user_id=?').run(shadow.local_id);w.db.prepare('UPDATE users SET active=0 WHERE id=?').run(shadow.local_id)}}return send({ok:true});
     }
     fail('Funktionen finns inte.',404);
@@ -126,6 +132,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
       if(managed){const a=fields.account||fields;if((requestedRole&&requestedRole!==existing.role)||(a.active!==undefined&&a.active!==Boolean(existing.active))||a.password)fail('Ändra tilldelad åtkomst under Hantera katthem och åtkomst.',403)}
       if(target!==primary&&requestedRole==='superadmin'&&(!managed||existing.role!=='superadmin'))fail('Systemets superadmin skapas i det ursprungliga katthemmet.',403)
      }
+     if(url.pathname==='/api/profile'&&req.method==='PATCH'&&target!==p.source){const fields=json(payload);if(Object.hasOwn(fields,'name')&&fields.name!==p.user.name||Object.hasOwn(fields,'email')&&fields.email!==p.user.email)fail('Namn och inloggningsadress ändras i ditt ordinarie katthem.',403);delete fields.name;delete fields.email;payload=Buffer.from(JSON.stringify(fields));}
      if(url.pathname==='/api/password'&&req.method==='POST')target=p.source;
      token=await localSession(p,target);
      // A selected shelter cannot grant system-wide superadmin rights to another tenant.
@@ -136,19 +143,20 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(p&&access(p,target))await syncGrantedProfiles(target);
    const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
    const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
-   if(result.ok&&write&&/^\/api\/(users|volunteers|members)(\/|$)/.test(url.pathname))await reconcile();
+   if(result.ok&&write&&/^\/api\/(users|volunteers|members|profile)(\/|$)/.test(url.pathname))await reconcile();
    const contentType=result.headers.get('content-type')||'',buffer=Buffer.from(await result.arrayBuffer());
    if(url.pathname==='/api/login'&&result.ok){
     const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,data.user.id)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
-    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);return send(data);
+    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);if(!access(p,target)){const next=houses().find(h=>access(p,h.id));if(!next)fail('Engagemanget har avslutats och personuppgifterna har gallrats.',401);registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(next.id,newToken);res.setHeader('Set-Cookie',cookie(newToken));return send({redirect_home:true})}res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;return send(data);
    }
-   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
+   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
    for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
   }catch(e){if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve)});
- const close=async()=>{closing=true;await new Promise(r=>server.close(r));await Promise.all([...workers.values()].map(w=>new Promise(r=>{if(w.child.exitCode!==null)return r();w.child.once('exit',r);w.child.kill()})));registry.close()};
- return {server,close};
+ const lifecycleTimer=setInterval(()=>{try{lifecycle.purge()}catch{console.error('Gallring kunde inte slutföras; nytt försök görs automatiskt.')}},60000);lifecycleTimer.unref();
+ const close=async()=>{clearInterval(lifecycleTimer);closing=true;await new Promise(r=>server.close(r));await Promise.all([...workers.values()].map(w=>new Promise(r=>{if(w.child.exitCode!==null)return r();w.child.once('exit',r);w.child.kill()})));registry.close()};
+ return {server,close,maintenance:()=>lifecycle.purge()};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const network=process.platform==='win32'&&root.startsWith('\\\\');const dataDir=process.env.DATA_DIR||(network&&process.env.LOCALAPPDATA?path.join(process.env.LOCALAPPDATA,'Katthem','data'):path.join(root,'data'));

@@ -3,7 +3,7 @@ const cell=value=>{let text=String(value??'');if(/^\s*[=+@-]/.test(text))text="'
 export function exportAttachments(db){
  db.exec('BEGIN');try{
  const definitions=[
- ['volontarer.csv','member_profiles',['id','user_id','name','email','phone','address','member_number','member_since','status','board_role','board_title','responsibilities','note','revision','updated_at','birth_date','is_member','shelter','animal_care_trained','messenger_url']],
+ ['volontarer.csv','member_profiles',['id','user_id','name','email','phone','status','board_role','board_title','responsibilities','note','revision','updated_at','birth_date','shelter','animal_care_trained','messenger_url']],
  ['konton.csv','users',['id','name','email','role','active','green_manual','created_at',...(db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='carried_shifts')?['carried_shifts']:[])]],
  ['schema.csv','slots',['id','date','start','end','title','capacity','note','cancelled','kind','extra_info']],
  ['bokningar.csv','bookings',['id','user_id','slot_id']],
@@ -12,6 +12,7 @@ export function exportAttachments(db){
  ['volontarstraff-ursprung.csv','volunteer_meeting_origins',['date','slot_id']],
  ['introduktion.csv','checklist_progress',['user_id','item_id']]
  ];
+ for(const table of ['engagements','routine_versions','anonymous_staffing'])if(db.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(table))definitions.push([table+'.csv',table,db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name)]);
  const files=definitions.map(([filename,table,columns])=>{const rows=db.prepare('SELECT '+columns.join(',')+' FROM '+table).all();return {filename,content:'\uFEFF'+[columns,...rows.map(row=>columns.map(c=>row[c]))].map(row=>row.map(cell).join(';')).join('\r\n')+'\r\n',contentType:'text/csv; charset=utf-8'}});
  db.exec('COMMIT');if(files.reduce((total,f)=>total+Buffer.byteLength(f.content),0)>15*1024*1024)throw Error('CSV-exporten är för stor för e-post.');return files;
  }catch(e){try{db.exec('ROLLBACK')}catch{}throw e}

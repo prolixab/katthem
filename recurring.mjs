@@ -23,8 +23,9 @@ export function createRecurringBookings(db){
   const key=createHash('sha256').update(JSON.stringify({uid,rows})).digest('hex');
   return {rows,key};
  }
- function book(uid,p){
+ function book(uid,p,{validate=()=>{}}={}){
   db.exec('BEGIN IMMEDIATE');try{
+   validate();
    const plan=preview(uid,p);
    if(p.key!==plan.key)fail('Schemat har ändrats. Förhandsgranska bokningarna igen.',409,'STALE_RECURRING');
    const pending=plan.rows.filter(r=>r.status==='new');if(!pending.length)fail('Inga nya pass att boka.');

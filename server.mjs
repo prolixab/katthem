@@ -1,3 +1,4 @@
+import {createEngagement} from './engagement.mjs';
 import {resolveShelter} from './shelter.mjs';
 import {createRecurringBookings} from './recurring.mjs';
 import {createNews} from './news.mjs';
@@ -137,6 +138,7 @@ if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('shelter-address-
  db.exec('BEGIN');try{db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(process.env.EMPTY_SHELTER?'':'Thulevägen 2, 561 32 Huskvarna');db.prepare('INSERT INTO migrations VALUES(?)').run('shelter-address-thulevagen-2-v1');db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
 }
 const checklistIds=new Set(checklistGroups.flatMap(group=>group.items.map(item=>item.id)));
+const engagements=createEngagement(db);engagements.setChecklistIds(checklistIds);
 db.exec('CREATE TABLE IF NOT EXISTS checklist_progress(user_id INTEGER NOT NULL REFERENCES users(id),item_id TEXT NOT NULL,PRIMARY KEY(user_id,item_id))');
 const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
 const sessions=db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token=? AND expires>? AND active=1');
@@ -147,7 +149,7 @@ function completedCounts(userId){
  return counts;
 }
 function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return [...checklistIds].every(id=>checked.has(id))}
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function shelterFor(uid){return resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get())}
 function snapshot(user){
  ensureOpenHouse();schedule.ensure();members.syncAccounts();
@@ -157,7 +159,7 @@ function snapshot(user){
  const greenCounts=new Map();for(const b of db.prepare('SELECT user_id,slot_id FROM bookings').all())if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
  const directory=members.list().flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  const contacts=members.list().filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
- return {contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?members.list():undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,EXISTS(SELECT 1 FROM volunteer_meeting_origins v WHERE v.slot_id=s.id) volunteer_meeting,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id).map(s=>({...s,green_booked:greenCounts.get(s.id)||0})),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ return {my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?members.list():undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,EXISTS(SELECT 1 FROM volunteer_meeting_origins v WHERE v.slot_id=s.id) volunteer_meeting,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id).map(s=>({...s,green_booked:greenCounts.get(s.id)||0})),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -229,18 +231,26 @@ const server=http.createServer(async(req,res)=>{
   }
  }
  if(url.pathname==='/api/state'&&req.method==='GET')return send(snapshot(user));
+ if(url.pathname==='/api/profile'&&req.method==='PATCH'){
+  const p=await body(req),allowed=['name','email','phone','messenger_url','birth_date','revision'];if(!p||Object.keys(p).some(k=>!allowed.includes(k))||!Number.isInteger(p.revision))fail('Endast egna kontaktuppgifter kan ändras här.');
+  const profile=db.prepare('SELECT * FROM member_profiles WHERE user_id=?').get(user.id);if(!profile)fail('Profilen finns inte.',404);if(engagements.get(user.id)?.status==='purged')fail('Engagemanget har gallrats.',403);
+  const fields={...profile,...p,animal_care_trained:Boolean(profile.animal_care_trained)};members.save(profile.id,fields);return send(snapshot(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)));
+ }
+ if(url.pathname==='/api/engagement'&&req.method==='PATCH'){const p=await body(req);db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(user.id,p,{self:true});db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}return send(snapshot(user))}
+ if(url.pathname==='/api/routines/accept'&&req.method==='POST'){const p=await body(req);engagements.accept(user.id,p.version);return send(snapshot(user))}
  if(url.pathname==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(token);res.setHeader('Set-Cookie',`session=; ${cookieOptions}; Max-Age=0`);return send({ok:true})}
  if(url.pathname==='/api/password'&&req.method==='POST'){const p=await body(req);if(typeof p.current!=='string'||!verify(p.current,user.password))fail('Nuvarande lösenord stämmer inte.');if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');db.prepare('UPDATE users SET password=? WHERE id=?').run(hash(p.password),user.id);db.prepare('DELETE FROM password_resets WHERE user_id=?').run(user.id);db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(user.id,token);return send({ok:true})}
  if(url.pathname==='/api/bookings/recurring'&&req.method==='POST'){
- const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;
+ const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id; engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id});
  schedule.ensure();ensureOpenHouse();
  if(p.preview===true)return send(recurring.preview(uid,p));
- recurring.book(uid,p);return send(snapshot(user));
+ recurring.book(uid,p,{validate:()=>engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id})});return send(snapshot(user));
  }
  if(url.pathname==='/api/bookings'&&req.method==='POST'){
 
- const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;
+ const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id});
  db.exec('BEGIN IMMEDIATE');try{
+ engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id});
  const slot=db.prepare('SELECT * FROM slots WHERE id=?').get(Number(p.slotId));if(!slot)fail('Passet finns inte.',404);
  if(slot.cancelled)fail(slot.kind==='event'?'Händelsen är inställd.':'Passet är inställt.',409);
  if(new Date(slot.date+'T'+slot.start+':00')<=new Date())fail('Passet har redan börjat.');
@@ -280,6 +290,8 @@ const server=http.createServer(async(req,res)=>{
  }
  if(/^\/api\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){const p=await body(req);news.dismiss(user.id,Number(url.pathname.split('/')[3]),p.revision);return send(snapshot(user))}
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(url.pathname==='/api/routines'&&req.method==='PUT'){engagements.publish(await body(req));return send(snapshot(user))}
+ if(/^\/api\/engagements\/\d+(?:\/(hold|introduction))?$/.test(url.pathname)&&req.method==='PATCH'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);const p=await body(req),action=url.pathname.split('/')[4];if(action==='hold')engagements.hold(id,p);else if(action==='introduction')engagements.approve(id,p);else{db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(id,p);db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}}return send(snapshot(user))}
  if((url.pathname==='/api/news'&&req.method==='POST')||(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);news.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p);return send(snapshot(user))}
  if(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='DELETE'){const p=await body(req);news.remove(Number(url.pathname.split('/').pop()),p.revision);return send(snapshot(user))}
  if(url.pathname==='/api/door-code'&&req.method==='PUT'){
