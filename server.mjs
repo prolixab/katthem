@@ -290,6 +290,11 @@ const server=http.createServer(async(req,res)=>{
  }
  if(/^\/api\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){const p=await body(req);news.dismiss(user.id,Number(url.pathname.split('/')[3]),p.revision);return send(snapshot(user))}
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(/^\/api\/members\/\d+\/phone$/.test(url.pathname)&&req.method==='PATCH'){
+  const id=Number(url.pathname.split('/')[3]),p=await body(req);if(typeof p.phone!=='string'||p.phone.length>100||/[\r\n\0]/.test(p.phone)||!Number.isInteger(p.revision)||Object.keys(p).some(k=>!['phone','revision'].includes(k)))fail('Ange telefonnummer med högst 100 tecken och öppna formuläret igen vid behov.');
+  if(!db.prepare('SELECT id FROM member_profiles WHERE id=?').get(id))fail('Volontärprofilen finns inte.',404);
+  const saved=db.prepare('UPDATE member_profiles SET phone=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?').run(p.phone.trim(),Date.now(),id,p.revision);if(!saved.changes)fail('Profilen har ändrats. Uppdatera sidan och öppna formuläret igen.',409);return send(snapshot(user));
+ }
  if(url.pathname==='/api/routines'&&req.method==='PUT'){engagements.publish(await body(req));return send(snapshot(user))}
  if(/^\/api\/engagements\/\d+(?:\/(hold|introduction))?$/.test(url.pathname)&&req.method==='PATCH'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);const p=await body(req),action=url.pathname.split('/')[4];if(action==='hold')engagements.hold(id,p);else if(action==='introduction')engagements.approve(id,p);else{db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(id,p);db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}}return send(snapshot(user))}
  if((url.pathname==='/api/news'&&req.method==='POST')||(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);news.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p);return send(snapshot(user))}
