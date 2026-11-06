@@ -1,6 +1,7 @@
+import {setPasswordChange} from './password-policy.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 const digest=token=>createHash('sha256').update(token).digest('hex');
-export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.now()}={}){
+export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.now(),verifyPassword}={}){
  db.exec('CREATE TABLE IF NOT EXISTS password_resets(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,expires INTEGER NOT NULL)');
  const message='Om adressen hör till ett aktivt konto och e-post är aktiverad skickas en återställningslänk. Kontrollera även skräpposten. Annars behöver du hjälp av administratören.';
  async function request(email){
@@ -18,9 +19,11 @@ export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.n
   if(typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||typeof password!=='string'||password.length<10||password.length>200)throw Object.assign(Error('Använd en giltig länk och ett lösenord med 10–200 tecken.'),{status:400});
   db.exec('BEGIN IMMEDIATE');
   try{
-   const entry=db.prepare('SELECT p.user_id FROM password_resets p JOIN users u ON u.id=p.user_id WHERE token_hash=? AND expires>? AND u.active=1').get(digest(token),now());
+   const entry=db.prepare('SELECT p.user_id,u.password FROM password_resets p JOIN users u ON u.id=p.user_id WHERE token_hash=? AND expires>? AND u.active=1').get(digest(token),now());
    if(!entry)throw Object.assign(Error('Länken är ogiltig eller har gått ut. Begär en ny återställningslänk.'),{status:400});
+   if(verifyPassword&&verifyPassword(password,entry.password))throw Object.assign(Error('Välj ett nytt lösenord som skiljer sig från det nuvarande.'),{status:400});
    db.prepare('UPDATE users SET password=? WHERE id=?').run(hashPassword(password),entry.user_id);
+   setPasswordChange(db,entry.user_id,false);
    db.prepare('DELETE FROM sessions WHERE user_id=?').run(entry.user_id);
    db.prepare('DELETE FROM password_resets WHERE user_id=?').run(entry.user_id);
    db.exec('COMMIT');return {ok:true};

@@ -49,3 +49,14 @@ dialog:has(.volunteer-profile-dialog){width:920px}.profile-form-grid,.profile-de
 .schedule-summary{grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch}.schedule-summary>.stat{min-width:0;margin:0;display:flex;flex-direction:column;justify-content:flex-start;gap:12px}.schedule-summary .door-code-panel{align-items:flex-start}.schedule-summary .door-code-panel h2{font-size:18px}.schedule-summary .door-code-value{font-size:26px;margin:6px 0}.schedule-summary .door-code-panel button{font-size:12px;padding:7px 10px}.schedule-summary .eyebrow{font-size:9px;letter-spacing:1px}@media(max-width:1000px){.schedule-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.schedule-summary{grid-template-columns:1fr}}
 
 .portal-choice{margin:0;max-width:360px}.portal-choice select{margin:4px 0 0;padding:7px 12px}.topline{gap:16px;align-items:flex-start}
+/* Association branding changes appearance; staffing and experience indicators keep their semantic colors. */
+button,input,select,textarea,.panel,.stat,.slot,.sidebar,.export-link{background-color:var(--surface,#fff)}
+button.primary,.filters .selected,.day-head.today strong,#toast{background:var(--green);color:var(--on-primary,#fff)}
+.login-art{color:var(--on-primary,#fff)}.login-art .brand svg{color:inherit}
+.nav button.active,.badge,.hero{background:color-mix(in srgb,var(--green) 12%,var(--surface,#fff))}
+.nav button{background:transparent}.link{background:transparent}.notice{background:color-mix(in srgb,var(--cream) 85%,var(--green))}
+.brand .association-logo{width:62px;height:62px;object-fit:contain;flex-shrink:0}.brand span{overflow-wrap:anywhere}.brand{min-width:0}
+.branding-preview{min-height:70px;display:flex;align-items:center;justify-content:center;padding:14px;border:1px solid var(--line);border-radius:8px;margin-bottom:14px}.branding-preview img{max-height:140px;max-width:100%;object-fit:contain}
+.password-required{max-width:600px;margin:30px auto}.password-required h1{font-size:28px;margin-top:24px}input[type=color]{height:48px;padding:4px}
+dialog{background:var(--surface,#fff)}.slot.booked{background:color-mix(in srgb,var(--green) 12%,var(--surface,#fff))}.nav button.active,.badge{color:var(--ink)}.login-form>.brand{display:none}.login-art .small,.login-art .eyebrow{color:var(--on-primary,#fff)!important}
+@media(max-width:850px){.login-form>.brand{display:flex;margin-bottom:26px}}

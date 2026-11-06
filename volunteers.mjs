@@ -1,3 +1,4 @@
+import {setPasswordChange} from './password-policy.mjs';
 import {isAdmin,isSuperAdmin,canManageAccount} from './roles.mjs';
 export function createVolunteers(db,members,hash){
  const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
@@ -24,6 +25,7 @@ export function createVolunteers(db,members,hash){
    if(createsLogin)uid=Number(db.prepare('INSERT INTO users(name,email,password,role,active,green_manual,created_at) VALUES(?,?,?,?,?,?,?)').run(name,email,passwordHash,role,Number(active),role==='volunteer'?Number(green):0,Date.now()).lastInsertRowid);
    const profileId=members.save(id,{...p,name,email,user_id:uid},{transaction:false});
    if(target){db.prepare('UPDATE users SET role=?,active=?,green_manual=?,password=? WHERE id=?').run(role,Number(active),role==='volunteer'?Number(green):target.green_manual,passwordHash||target.password,target.id);
+    if(passwordHash)setPasswordChange(db,target.id,true);
     if(passwordHash||role!==target.role||active!==Boolean(target.active)){db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);db.prepare('DELETE FROM password_resets WHERE user_id=?').run(target.id)}
    }
    db.exec('COMMIT');return profileId;

@@ -32,7 +32,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  let r=await call('slots','POST',{date,start:'12:00',end:'13:00',title:'Testpass',capacity:1},ac);assert.equal(r.status,200);const slot=(await r.json()).slots.find(s=>s.title==='Testpass');
  r=await call('users','POST',{name:'Testvolontär',email:'test@example.se',password:'password12345'},ac);assert.equal(r.status,200);const uid=(await r.json()).users.find(u=>u.email==='test@example.se').id;
  assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
- const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');
+ const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');assert.equal((await call('password','POST',{current:'Password12345',password:'OwnAdminPassword12345'},newAdminCookie)).status,200);
  assert.equal((await call('users/'+uid,'PATCH',{role:'admin'},vc)).status,403);
  let roleChange=await call('users/'+uid,'PATCH',{role:'admin'},ac);assert.equal((await roleChange.json()).users.find(u=>u.id===uid).role,'admin');
  assert.equal((await call('users/'+uid,'PATCH',{role:'volunteer'},newAdminCookie)).status,403);
@@ -125,7 +125,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const importedUsers=(await imported.json()).users;assert.equal(importedUsers.find(u=>u.email==='asa@example.se').green,false);assert.equal(importedUsers.find(u=>u.email==='orjan@example.se').green,false);
  assert.equal(importedUsers.find(u=>u.email==='asa@example.se').name,'Åsa; Kattvän');
  const allGreen=await call('users/import','POST',{csv:'namn,e-post,lösenord\nGrupp,grupp@example.se,Password12345',green:true},ac);assert.equal(allGreen.status,200);assert.equal((await allGreen.json()).users.find(u=>u.email==='grupp@example.se').green_manual,true);
- const importedLogin=await call('login','POST',{email:'orjan@example.se',password:'Password67890'});assert.equal(importedLogin.status,200);assert.equal((await importedLogin.json()).user.green,false);
+ const importedLogin=await call('login','POST',{email:'orjan@example.se',password:'Password67890'});assert.equal(importedLogin.status,200);assert.equal((await importedLogin.json()).password_change_required,true);const importedCookie=importedLogin.headers.get('set-cookie').split(';')[0];assert.equal((await call('password','POST',{current:'Password67890',password:'OwnImportedPassword123'},importedCookie)).status,200);assert.equal((await(await call('state','GET',null,importedCookie)).json()).user.green,false);
  for(const csv of [importCsv,'namn;e-post;lösenord\nNy;new@example.se;Password12345\nFel;fel@example.se;kort','namn;e-post;lösenord\nNy;new@example.se;Password12345\nDublett;NEW@example.se;Password12345']){
   assert.equal((await call('users/import','POST',{csv,green:false},ac)).status,400);
   assert.equal((await(await call('state','GET',null,ac)).json()).users.some(u=>u.email==='new@example.se'),false);
@@ -145,7 +145,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  for(const item of checklistGroups.flatMap(g=>g.items))fixtureDb.prepare('INSERT OR IGNORE INTO checklist_progress(user_id,item_id) VALUES(?,?)').run(uid,item.id);
  stats=await(await call('state','GET',null,ac)).json();assert.equal(stats.users.find(u=>u.id===uid).completed_shifts,10);assert.equal(stats.users.find(u=>u.id===uid).green,true);
  const automatic=await call('users/'+uid,'PATCH',{green:false},ac);assert.equal((await automatic.json()).users.find(u=>u.id===uid).green,true);
- const historyLogin=await call('login','POST',{email:'test@example.se',password:'password12345'});assert.equal(historyLogin.status,200);const historyUser=(await historyLogin.json()).user;assert.equal(historyUser.completed_shifts,10);assert.equal(historyUser.green,true);
+ const historyLogin=await call('login','POST',{email:'test@example.se',password:'password12345'});assert.equal(historyLogin.status,200);assert.equal((await historyLogin.json()).password_change_required,true);const historyCookie=historyLogin.headers.get('set-cookie').split(';')[0];assert.equal((await call('password','POST',{current:'password12345',password:'OwnHistoryPassword123'},historyCookie)).status,200);const historyUser=(await(await call('state','GET',null,historyCookie)).json()).user;assert.equal(historyUser.completed_shifts,10);assert.equal(historyUser.green,true);
  }finally{fixtureDb.close()}
  const results=await Promise.all([call('bookings','POST',{slotId:slot.id},vc),call('bookings','POST',{slotId:slot.id,userId:uid},ac)]);assert.deepEqual(results.map(x=>x.status).sort(),[200,200]);
  let s=await(await call('state','GET',null,ac)).json();assert.equal(s.slots.find(x=>x.id===slot.id).booked,2);const booking=s.bookings.find(b=>b.slot_id===slot.id);
@@ -213,7 +213,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const bookedState=await(await call('state','GET',null,vc)).json(),eventBooking=bookedState.bookings.find(b=>b.slot_id===eventId);
  const calendar=await call('bookings/'+eventBooking.id+'/calendar','GET',null,vc);assert.equal(calendar.status,200);assert.match(calendar.headers.get('content-type'),/text\/calendar/);assert.match(await calendar.text(),/TZID=Europe\/Stockholm/);
  assert.equal((await call('bookings/'+eventBooking.id+'/calendar')).status,401);
- const otherLogin=await call('login','POST',{email:'test@example.se',password:'password12345'}),otherCookie=otherLogin.headers.get('set-cookie').split(';')[0];
+ const otherLogin=await call('login','POST',{email:'test@example.se',password:'OwnHistoryPassword123'}),otherCookie=otherLogin.headers.get('set-cookie').split(';')[0];
  assert.equal((await call('bookings/'+eventBooking.id+'/calendar','GET',null,otherCookie)).status,403);
  const eventSlot=bookedState.slots.find(s=>s.id===eventId),weekStart=new Date(eventSlot.date+'T12:00:00Z');weekStart.setUTCDate(weekStart.getUTCDate()-(weekStart.getUTCDay()+6)%7);
  const weekPath='calendar/week?start='+weekStart.toISOString().slice(0,10);
@@ -376,7 +376,7 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse av åttonde
  const staffingCases=vm.runInContext(`(()=>{const now=new Date(2030,4,10,12),s={date:'2030-05-11',start:'08:00',booked:1,minimum_staff:2,cancelled:0};return [needsStaffing(s,now),needsStaffing({...s,booked:2},now),needsStaffing({...s,cancelled:1},now),needsStaffing({...s,date:'2030-05-10',start:'11:00'},now),needsStaffing({...s,date:'2030-05-18'},now),needsStaffing({...s,date:'2030-05-17',start:'12:00'},now),needsStaffing({...s,date:'2030-05-17',start:'12:01'},now)]})()`,context);
  assert.deepEqual(Array.from(staffingCases),[true,false,false,false,false,true,false]);
 
- vm.runInContext("state=fixture;view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Volontärer att följa upp/);assert.equal((elements.get('#app').innerHTML.match(/<details class="admin-section"/g)||[]).length,9);assert.doesNotMatch(elements.get('#app').innerHTML,/Gör till admin/);assert.match(elements.get('#app').innerHTML,/Födelsedagar/);assert.match(elements.get('#app').innerHTML,/dina pass inom nästa dygn/);
+ vm.runInContext("state=fixture;view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Volontärer att följa upp/);assert.equal((elements.get('#app').innerHTML.match(/<details class="admin-section"/g)||[]).length,10);assert.doesNotMatch(elements.get('#app').innerHTML,/Gör till admin/);assert.match(elements.get('#app').innerHTML,/Födelsedagar/);assert.match(elements.get('#app').innerHTML,/dina pass inom nästa dygn/);
  fixture.slots[0].mine=0;vm.runInContext("view='schedule';render()",context);assert.match(elements.get('#app').innerHTML,/Hantera pass<\/button><button class="primary self-book-card" data-self-book="5">Bekräfta bokning/);fixture.slots[0].mine=1;vm.runInContext("view='schedule';render()",context);assert.doesNotMatch(elements.get('#app').innerHTML,/data-self-book=/);vm.runInContext("view='admin';render()",context);
  vm.runInContext('memberForm()',context);assert.match(elements.get('#modal').innerHTML,/option value="admin"/);
  assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa öppet hus/);assert.match(elements.get('#app').innerHTML,/Skapa händelse/);vm.runInContext("view='members';render()",context);assert.doesNotMatch(elements.get('#app').innerHTML,/Lägg till volontärkonto|Skapa adminkonto/);assert.match(elements.get('#app').innerHTML,/Lägg till volontär/);assert.match(elements.get('#app').innerHTML,/Gör till admin/);
