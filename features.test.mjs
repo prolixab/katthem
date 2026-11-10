@@ -1,3 +1,4 @@
+import {runInNewContext} from 'node:vm';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -138,3 +139,20 @@ test('Katthem: Huskvarna och Jönköping delar adress/kod, okänd ort får ingen
 
 import {createPortalNews} from './portal-news.mjs';
 test('Gemensamma nyheter: målgrupper, nya katthem, personlig döljning och samtidighet',()=>{const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');let time=10000;const houses=new Set(['a','b']);try{const news=createPortalNews(db,{shelter:id=>houses.has(id),now:()=>time}),p={source:'a',user_id:1},fields={title:'Uppdatering',body:'Text',expires_at:20000,published:true,all_shelters:false,targets:['a']};assert.throws(()=>news.save(null,{...fields,targets:[]}),e=>e.status===400);assert.throws(()=>news.save(null,{...fields,expires_at:null}),e=>e.status===400);assert.throws(()=>news.save(null,{...fields,targets:['unknown']}),e=>e.status===400);const id=news.save(null,fields);assert.equal(news.board('a').length,1);assert.equal(news.board('b').length,0);assert.throws(()=>news.dismiss('b',p,id,0),e=>e.status===404);news.dismiss('a',p,id,0);assert.equal(news.visible('a',p).length,0);assert.equal(news.board('a').length,1);news.save(id,{...fields,all_shelters:true,targets:[],revision:0});houses.add('c');assert.equal(news.board('c').length,1);assert.equal(news.visible('a',p).length,1);assert.throws(()=>news.save(id,{...fields,revision:0}),e=>e.status===409);assert.throws(()=>news.remove(id,0),e=>e.status===409);news.dismiss('a',p,id,1);time=20001;assert.equal(news.board('a').length,0);news.remove(id,1);assert.equal(news.all().length,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM portal_news_dismissals').get().n,0)}finally{db.close()}});
+
+ test('Återställningslänk: katthem från länken går före ett tidigare val och bevaras efter rensning',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8');
+ const open=source.split('\n').find(line=>line.startsWith('function openResetLink()'));
+ const calls=[],app={innerHTML:'previous form'},context={URLSearchParams,window:{location:{hash:'#reset=abc',search:'?shelter=hem-b',pathname:'/'}},portalLoginShelter:()=> 'hem-a',mutationVersion:0,history:{replaceState:(_a,_b,url)=>calls.push(url)},state:{},view:'mine',app,login:()=>assert.equal(app.innerHTML,''),modal:{open:false},resetPassword:(token,shelter)=>calls.push([token,shelter])};
+ assert.equal(runInNewContext(open+';openResetLink()',context),true);
+ assert.deepEqual(calls,['/?shelter=hem-b',['abc','hem-b']]);assert.equal(context.portalHomeHint,'hem-b');assert.equal(context.state,null);
+});
+
+test('Lösenordsåterställning: sparandet använder länkens katthem även när väljaren ändras',async()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),reset=source.split('\n').find(line=>line.startsWith('function resetPassword('));
+ const form={},calls=[],button={disabled:false};let selected='hem-b';
+ const context={portalLoginShelter:()=>selected,show:()=>{},$:()=>form,FormData:class extends Map{constructor(){super([['password','NewPassword123'],['confirm','NewPassword123']])}},modal:{close:()=>{},querySelector:()=>({})},api:async(...args)=>calls.push(args),login:()=>{},toast:()=>{}};
+ runInNewContext(reset+';resetPassword("token-b")',context);selected='hem-a';
+ await form.onsubmit({preventDefault(){},target:{querySelector:()=>button}});
+ assert.equal(calls.length,1);assert.equal(calls[0][0],'password-reset/confirm');assert.equal(calls[0][2].token,'token-b');assert.equal(calls[0][3],'hem-b');
+});

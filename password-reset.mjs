@@ -1,7 +1,7 @@
 import {setPasswordChange} from './password-policy.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 const digest=token=>createHash('sha256').update(token).digest('hex');
-export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.now(),verifyPassword}={}){
+export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.now(),verifyPassword,shelterId}={}){
  db.exec('CREATE TABLE IF NOT EXISTS password_resets(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,expires INTEGER NOT NULL)');
  const message='Om adressen hör till ett aktivt konto och e-post är aktiverad skickas en återställningslänk. Kontrollera även skräpposten. Annars behöver du hjälp av administratören.';
  async function request(email){
@@ -11,7 +11,7 @@ export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.n
   if(db.prepare('SELECT COUNT(*) n FROM password_resets WHERE user_id=? AND created_at>?').get(user.id,time-1800000).n>=3)return {message};
   const token=randomBytes(32).toString('hex'),tokenHash=digest(token);
   db.prepare('INSERT INTO password_resets VALUES(?,?,?,?)').run(tokenHash,user.id,time,time+1800000);
-  try{await mailProvider.send({to:String(email).trim().toLowerCase(),subject:'Återställ ditt lösenord – Katthemmet',text:`Du har begärt ett nytt lösenord till volontärportalen.\n\nÖppna länken inom 30 minuter:\n${(()=>{const u=new URL(mailProvider.appUrl());u.hash='reset='+token;return u.href})()}\n\nLänken kan användas en gång. Om du inte begärt detta kan du bortse från mejlet. Ditt lösenord har inte ändrats.`,key:'katthem-reset/'+tokenHash})}
+  try{await mailProvider.send({to:String(email).trim().toLowerCase(),subject:'Återställ ditt lösenord – Katthemmet',text:`Du har begärt ett nytt lösenord till volontärportalen.\n\nÖppna länken inom 30 minuter:\n${(()=>{const u=new URL(mailProvider.appUrl());if(shelterId)u.searchParams.set('shelter',shelterId);u.hash='reset='+token;return u.href})()}\n\nLänken kan användas en gång. Om du inte begärt detta kan du bortse från mejlet. Ditt lösenord har inte ändrats.`,key:'katthem-reset/'+tokenHash})}
   catch{db.prepare('DELETE FROM password_resets WHERE token_hash=?').run(tokenHash)}
   return {message};
  }

@@ -1,3 +1,4 @@
+import {createPasswordReset} from './password-reset.mjs';
 import {checklistGroups} from './checklist.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,6 +38,20 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await call('news','POST',{title:'B-hemlig nyhet',body:'B-information',published:true,expires_at:Date.now()+86400000},sa.cookie,b)).status,200);
   const form={name:'Person B',email:'person-b@example.se',phone:'',address:'',member_number:'',member_since:'',status:'active',board_role:'none',board_title:'',responsibilities:'',note:'B-privat',birth_date:'',shelter:'Huskvarna',messenger_url:'',is_member:false,animal_care_trained:false,account:{role:'volunteer',password,active:true,green:false}};
   assert.equal((await call('volunteers','POST',form,sa.cookie,b)).status,200);
+  // A link opened without a session must reset the account in its original shelter only.
+  const resetDb=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite')),resetMessages=[];
+  try{
+   const resetService=createPasswordReset(resetDb,{appUrl:()=>base,status:()=>({configured:true}),send:async message=>resetMessages.push(message)},p=>'test-salt:'+scryptSync(p,'test-salt',64).toString('hex'),{shelterId:b});
+   await resetService.request('person-b@example.se');
+   const resetUrl=new URL(resetMessages[0].text.match(/http[^\s]+/)[0]);
+   assert.equal(resetUrl.searchParams.get('shelter'),b);
+   const resetToken=new URLSearchParams(resetUrl.hash.slice(1)).get('reset'),nextPassword=password+'-reset';
+   assert.equal((await call('password-reset/confirm','POST',{token:resetToken,password:nextPassword})).status,400);
+   assert.equal((await call('password-reset/confirm'+resetUrl.search,'POST',{token:resetToken,password:nextPassword})).status,200);
+   assert.equal((await call('password-reset/confirm'+resetUrl.search,'POST',{token:resetToken,password:nextPassword})).status,400);
+   credentials.set(b+':person-b@example.se',nextPassword);
+   const verified=await login('person-b@example.se',b);assert.equal(verified.data.user.email,'person-b@example.se');
+  }finally{resetDb.close()}
   let bagState=await(await call('state','GET',null,sa.cookie,b)).json(),bagProfile=bagState.members.find(m=>m.email==='person-b@example.se');assert.equal(bagProfile.volunteer_bag,false);const bagUpdate=await call('volunteers/'+bagProfile.id,'PUT',{...bagProfile,volunteer_bag:true,account:{role:'volunteer',active:true,green:false,password:''}},sa.cookie,b);assert.equal(bagUpdate.status,200,await bagUpdate.clone().text());assert.equal((await bagUpdate.json()).members.find(m=>m.id===bagProfile.id).volunteer_bag,true);
   const ownA=await(await call('state','GET',null,sa.cookie,'huskvarna')).json();assert.notEqual(ownA.door_code.code,'B-CODE');assert.ok(!JSON.stringify(ownA).includes('B-privat'));assert.ok(!JSON.stringify(ownA).includes('B-hemlig nyhet'));
   assert.equal((await call('volunteers','POST',{...form,name:'Lokal styrelse',email:'board@example.se',note:'',account:{...form.account,role:'admin'}},sa.cookie,b)).status,200);

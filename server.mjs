@@ -133,7 +133,7 @@ const reminders=createReminders(db,{mailProvider:emailSettings});
 const csvExports=createCsvExports(db,emailSettings);
 const schedule=createSchedule(db,sundayRules);schedule.ensure();
 const notifications=createNotifications(db,emailSettings);
-const passwordReset=createPasswordReset(db,emailSettings,hash,{verifyPassword:verify});
+const passwordReset=createPasswordReset(db,emailSettings,hash,{verifyPassword:verify,shelterId:process.env.PORTAL_SHELTER_ID});
 db.exec("CREATE TABLE IF NOT EXISTS volunteer_info(id INTEGER PRIMARY KEY CHECK(id=1),location TEXT NOT NULL DEFAULT '',access TEXT NOT NULL DEFAULT '',introduction TEXT NOT NULL DEFAULT '',routines TEXT NOT NULL DEFAULT ''); INSERT OR IGNORE INTO volunteer_info(id) VALUES(1)");
 // Apply the confirmed address once; future admin edits remain intact.
 if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('shelter-address-thulevagen-2-v1')){

@@ -293,3 +293,7 @@ Vid denna uppgradering införs must_change_password med standardvärde 1. Befint
 Formuläret för nya konton föreslår unika tillfälliga lösenord med webbläsarens kryptografiska slumptalsgenerator. Inget gemensamt standardlösenord införs. CSV-import behåller uttryckligen tilldelade startlösenord från filen; välj ett unikt per person. Inga lösenord skickas automatiskt via e-post. Tidsbegränsad lösenordsbytesvy exponerar inga scheman, nyheter eller andra profiler. Gatewayn kontrollerar originalkontots krav även vid tilldelad åtkomst till andra katthem; interna skuggkonton kan inte användas för att kringgå det. Vid flytt följer lösenordsbyteskravet med kontot.
 
 Manuell testning: kontrollera nytt färgval, logotyp och standardåterställning i ett hem, växla till ett annat, kontrollera påsmarkering och prova ett icke-.local-konto med krav på byte. Publicering till GitHub görs separat på begäran.
+
+## Lösenordsåterställning för flera katthem
+
+Nya återställningslänkar innehåller katthemmets identifierare i parametern `shelter`. Länken väljer rätt katthem även i en ny webbläsare, och sparandet använder samma katthem även om väljaren ändras medan formuläret är öppet. Token ligger fortsatt i URL-fragmentet och tas bort ur adressfältet när formuläret öppnas. Äldre länkar utan katthem använder det aktuella valet; begär en ny länk om återställningen inte fungerar.
