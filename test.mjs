@@ -422,6 +422,12 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse över rekom
  assert.match(elements.get('#app').innerHTML,/Superadmin: aktivera och kontrollera e-post/);
  fixture.user.role='volunteer';vm.runInContext('render()',context);
  assert.match(elements.get('#app').innerHTML,/Manual för volontärer/);
+ const volunteerManual=vm.runInContext('portalManual()',context);
+ assert.doesNotMatch(volunteerManual,/Ändra rekommenderat antal deltagare|Grafisk profil och logotyp|Volontärspåse|Administration →|CSV-import|superadmin|GitHub/i);
+ for(const topic of ['Steg till första bokningen','Boka ett pass','Min profil','Tillfälliga lösenord','Engagemang, introduktion och gallring'])assert.ok(volunteerManual.includes(topic));
+ fixture.user.role='admin';const adminManual=vm.runInContext('portalManual()',context);assert.match(adminManual,/Ändra rekommenderat antal deltagare|Grafisk profil och logotyp/);assert.match(adminManual,/Volontärspåse/);assert.doesNotMatch(adminManual,/GitHub/i);
+ fixture.user.role='superadmin';const superManual=vm.runInContext('portalManual()',context);assert.match(superManual,/Superadmin: aktivera och kontrollera e-post/);assert.doesNotMatch(superManual,/GitHub/i);fixture.user.role='volunteer';
+
  assert.match(elements.get('#app').innerHTML,/Bekräfta bokning/);
  assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa, ändra och ställa in pass|Superadmin:|id="edit-info"|Samla in uppgifter|Nyheter: publicera/);assert.match(elements.get('#app').innerHTML,/Nyheter ovanför kalendern/);assert.match(elements.get('#app').innerHTML,/Prenumerera på mina pass/);
  fixture.checklist={groups:[{title:'Lära känna arbetet',items:[{id:'sanitation',text:'Genomgång av sanering'}]}],checked_items:['sanitation']};

@@ -48,7 +48,7 @@ test('Introduktion och dagvy: nästa steg, färdiga steg och datum utanför veck
  const h=harness();h.context.isAdmin=u=>u.role==='admin';h.context.esc=s=>String(s);h.context.engagementLabel=s=>s;h.context.dateStr=()=> '2030-01-02';h.context.state.user={id:1,role:'volunteer',engagement:{status:'active',needs_intro:true,checklist_complete:false,practical_completed:false,routine_current:false,independent_approved:false,can_self_book:false}};
  assert.match(vm.runInContext('introductionProgress()',h.context),/data-intro-target="introduction-checklist"/);
  h.context.state.user.engagement.checklist_complete=true;h.context.state.user.engagement.practical_completed=true;assert.match(vm.runInContext('introductionProgress()',h.context),/data-intro-target="current-routines"/);
- h.context.state.user.engagement.routine_current=true;h.context.state.user.engagement.independent_approved=true;h.context.state.user.engagement.can_self_book=true;assert.match(vm.runInContext('introductionProgress()',h.context),/Du är redo att boka/);
+ h.context.state.user.engagement.routine_current=true;h.context.state.user.engagement.independent_approved=true;h.context.state.user.engagement.can_self_book=true;h.context.state.user.engagement.intro_ready=true;assert.equal(vm.runInContext('introductionProgress()',h.context),'');
  assert.equal(vm.runInContext("selectedScheduleDay(['2030-01-01','2030-01-02'])",h.context),'2030-01-02');assert.equal(vm.runInContext("selectedScheduleDay(['2030-02-01','2030-02-02'])",h.context),'2030-02-01');
 });
 
@@ -57,4 +57,11 @@ test('Navigation: Veckoschema fokuserar passen, loggan återställer startsidan'
  const context=vm.createContext({view:'admin',offset:3,filter:'mine',scheduleDay:'2030-01-01',mobileWeek:true,adminSectionsOpen:new Set(['booking-settings']),render:()=>calls.push(['render']),$:selector=>{calls.push(['heading',selector]);return heading},window:{scrollTo:o=>calls.push(['top',o])}});
  vm.runInContext(source+';navigateSchedule()',context);assert.equal(context.view,'schedule');assert.equal(context.offset,3);assert.equal(context.filter,'mine');assert.equal(context.adminSectionsOpen.size,0);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#schedule-heading'));assert.ok(calls.some(c=>c[0]==='scroll'));assert.ok(!calls.some(c=>c[0]==='top'));
  calls.length=0;vm.runInContext('navigateSchedule(true)',context);assert.equal(context.offset,0);assert.equal(context.filter,'all');assert.equal(context.scheduleDay,'');assert.equal(context.mobileWeek,false);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#home-heading'));assert.ok(calls.some(c=>c[0]==='top'&&c[1].top===0));
+});
+
+test('Startsidenotiser: väntande checklistor visas för admin och försvinner efter godkännande',()=>{
+ const source=appSource.split('\n').find(line=>line.startsWith('function introductionPendingPanel()'));
+ const context=vm.createContext({state:{user:{role:'admin'},introduction_pending:[{id:2,name:'Ny volontär',routine_current:true}]},isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s)});
+ const markup=vm.runInContext(source+';introductionPendingPanel()',context);assert.ok(markup.includes('Väntar på godkännande (1)'));assert.match(markup,/Ny volontär/);assert.match(markup,/data-review-introduction="2"/);
+ context.state.user.role='volunteer';assert.equal(vm.runInContext('introductionPendingPanel()',context),'');context.state.user.role='admin';context.state.introduction_pending=[];assert.equal(vm.runInContext('introductionPendingPanel()',context),'');
 });

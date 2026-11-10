@@ -21,9 +21,9 @@ test('Engagemang: kalendermånader, uppföljning, undantag och ny introduktion v
 });
 test('Introduktion: befintliga behåller behörighet, nya kräver checklista, rutiner och godkännande',()=>{
  const db=fixture(),e=createEngagement(db);e.setChecklistIds(['water']);try{
- assert.equal(e.get(1).can_self_book,true);db.prepare("INSERT INTO users(id,name,email,password) VALUES(2,'Ny','new@example.se','hash')").run();assert.equal(e.get(2).can_self_book,false);
+ assert.equal(e.get(1).can_self_book,true);db.prepare("INSERT INTO users(id,name,email,password) VALUES(2,'Ny','new@example.se','hash')").run();assert.equal(e.get(2).can_self_book,true);assert.equal(e.get(2).intro_remaining,3);
  e.publish({title:'Rutiner',body:'Läs whiteboard och kontrollera vatten.',version:0});assert.equal(e.get(1).can_self_book,false);assert.throws(()=>e.accept(1,0),/ändrats/);e.accept(1,1);assert.equal(e.get(1).can_self_book,true);
- e.assertBook(2,{admin:true});assert.throws(()=>e.approve(2,{practical_completed:true,independent_approved:true}),/Checklistan/);db.prepare('INSERT INTO checklist_progress VALUES(?,?)').run(2,'water');e.accept(2,1);e.approve(2,{practical_completed:true,independent_approved:true});e.assertBook(2);db.prepare('DELETE FROM checklist_progress WHERE user_id=2').run();assert.throws(()=>e.assertBook(2),/introduktionen/);
+ e.assertBook(2,{admin:true});assert.throws(()=>e.approve(2,{practical_completed:true,independent_approved:true}),/Checklistan/);db.prepare('INSERT INTO checklist_progress VALUES(?,?)').run(2,'water');e.accept(2,1);e.approve(2,{practical_completed:true,independent_approved:true});e.assertBook(2);db.prepare('DELETE FROM checklist_progress WHERE user_id=2').run();assert.throws(()=>e.assertBook(2),/introduktionschecklistan/);
  e.publish({title:'Ny version',body:'Nya rutiner',version:1});assert.equal(e.get(1).can_self_book,false);assert.equal(db.prepare('SELECT COUNT(*) n FROM routine_versions').get().n,2);
  }finally{db.close()}
 });
@@ -45,4 +45,27 @@ test('Flera katthem: atomisk paus, inga e-postsammanslagningar och konto bevarat
  p.update('a',1,{scope:'one',status:'ended',revision:ea.get(1).revision},{self:true});time=Date.UTC(2030,3,2);p.purge();assert.equal(ea.get(1).status,'purged');assert.equal(a.prepare('SELECT email FROM users').get().email,'test@example.se');assert.equal(b.prepare('SELECT email FROM users').get().email,'test@example.se');assert.equal(a.prepare('SELECT COUNT(*) n FROM member_profiles').get().n,0);
  p.update('b',1,{status:'ended',revision:eb.get(1).revision},{self:true});time=Date.UTC(2030,6,3);p.purge();assert.equal(a.prepare('SELECT active FROM users').get().active,0);assert.equal(b.prepare('SELECT active FROM users').get().active,0);assert.notEqual(a.prepare('SELECT email FROM users').get().email,'test@example.se');assert.equal(registry.prepare('SELECT COUNT(*) n FROM shadows').get().n,0);assert.equal(c.prepare('SELECT email FROM users').get().email,'test@example.se');
  }finally{a.close();b.close();c.close();registry.close();rmSync(dir,{recursive:true,force:true})}
+});
+
+test('Introduktionskvot: tre pass, full checklista, återgång och avbokade eller inställda pass',()=>{
+ const db=fixture();let time=new Date('2030-01-01T12:00').getTime();const e=createEngagement(db,{now:()=>time});e.setChecklistIds(['water','food']);
+ try{
+  db.exec("INSERT INTO users(id,name,email,password) VALUES(2,'Ny','new@example.se','hash');INSERT INTO slots VALUES(1,'2030-01-02','08:00','12:00','Ett',0),(2,'2030-01-03','08:00','12:00','Två',0),(3,'2030-01-04','08:00','12:00','Tre',0),(4,'2020-01-01','08:00','12:00','Gammalt',0);INSERT INTO bookings VALUES(4,2,4)");
+  assert.equal(e.get(2).intro_remaining,3);e.publish({title:'Rutiner',body:'Läs rutinerna',version:0});assert.throws(()=>e.assertBook(2),err=>err.code==='INTRODUCTION_REQUIRED');e.accept(2,1);
+  for(let id=1;id<=3;id++){e.assertBook(2);db.prepare('INSERT INTO bookings VALUES(?,?,?)').run(id,2,id)}
+  assert.equal(e.get(2).intro_remaining,0);assert.throws(()=>e.assertBook(2),err=>err.code==='INTRODUCTION_LIMIT');e.assertBook(2,{admin:true});
+  time=new Date('2030-01-03T18:00').getTime();assert.equal(e.get(2).intro_bookings,3); // completed shifts still use the quota
+  db.exec('UPDATE slots SET cancelled=1 WHERE id=1');assert.equal(e.get(2).intro_remaining,1);db.exec('DELETE FROM bookings WHERE id=2');assert.equal(e.get(2).intro_remaining,2);
+  assert.equal(e.get(2).awaiting_approval,false);db.exec("INSERT INTO checklist_progress VALUES(2,'water')");assert.equal(e.get(2).awaiting_approval,false);db.exec("INSERT INTO checklist_progress VALUES(2,'food')");assert.equal(e.get(2).awaiting_approval,true);
+  assert.throws(()=>e.approve(2,{practical_completed:false,independent_approved:true}),/praktisk/);e.approve(2,{practical_completed:true,independent_approved:true});assert.equal(e.get(2).awaiting_approval,false);e.assertBook(2,{count:100});
+  time=new Date('2030-02-01T12:00').getTime();e.resetIntroduction(2);assert.equal(e.get(2).intro_bookings,0);assert.equal(e.get(2).checklist_complete,false);
+ }finally{db.close()}
+});
+
+test('Introduktionsmigrering: tidigare historik räknas inte som nya introduktionspass',()=>{
+ const db=fixture(),time=new Date('2030-01-01T12:00').getTime();try{
+  createEngagement(db,{now:()=>time});db.prepare('UPDATE engagements SET needs_intro=1,practical_completed=0,independent_approved=0,changed_at=? WHERE user_id=1').run(time);
+  db.exec("ALTER TABLE engagements DROP COLUMN intro_started_at;INSERT INTO slots VALUES(1,'2020-01-01','08:00','12:00','Historik',0),(2,'2030-01-02','08:00','12:00','Intro',0);INSERT INTO bookings VALUES(1,1,1),(2,1,2)");
+  const migrated=createEngagement(db,{now:()=>time});assert.equal(migrated.get(1).intro_started_at,time);assert.equal(migrated.get(1).intro_bookings,1);assert.equal(migrated.get(1).intro_remaining,2);
+ }finally{db.close()}
 });

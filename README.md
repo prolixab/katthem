@@ -327,3 +327,15 @@ Bokningsrekommendation är nu hopfällbar som övriga administrationsdelar. Alla
 ### Navigation mellan startsida och schema (0.6.014)
 
 Veckoschema i menyn öppnar schemavyn och rullar direkt till Veckans pass, med fokus på rubriken. Senast valda vecka och filter behålls. Loggan uppe till vänster är en tangentbordstillgänglig knapp till startsidans början; den återställer aktuell vecka, alla pass och mobil dagvy. Inloggning visar fortfarande startsidan från början.
+
+## Version 0.6.015 – rollanpassad volontärmanual
+
+Volontärmanualen visar inte inställning av bokningsrekommendation, grafisk profil, logotyp eller registrering av volontärspåse. Gemensamma avsnitt om lösenord, engagemang, nyheter, schema och grönmarkering har volontäranpassade instruktioner. Administrativa arbetssteg och driftinformation finns kvar för admin och superadmin. Användarmanualerna beskriver att uppdateringen har publicerats, utan att nämna kodplattform eller push. Den interna publiceringsrutinen och nyheternas faktiska tidsgräns är oförändrade.
+
+## Version 0.6.016 – tre introduktionspass och gemensam godkännandenotis
+
+Nya volontärer får boka upp till tre introduktionspass själva efter aktuell rutinbekräftelse. Hela checklistan krävs fortsatt för slutligt godkännande. Kvoten räknar samtliga ej inställda bokningar sedan introduktionen började, både genomförda och kommande, även pass bokade av admin. Avbokning eller inställning frigör plats. Vid återkomst eller ny lokal introduktion räknas äldre pass inte in.
+
+När hela checklistan är klar visas en gemensam notis med personens namn på startsidan och i Administration för alla admins i det aktuella katthemmet. Volontären ser sin status och återstående kvot på startsidan. Notiserna försvinner vid slutligt godkännande, som kan ges före tredje passet. Inga extra e-postmeddelanden skickas. Admin bekräftar fortsatt praktisk introduktion och godkännande. Godkännande kräver full checklista och aktuella rutiner.
+
+Kvoten kontrolleras i bokningstransaktionen; återkommande bokningar godkänns bara om hela serien ryms. Admin kan boka ytterligare handledda pass åt en aktiv volontär. Befintliga fullt godkända volontärer behåller behörigheten. Minimibemanning och bokningsrekommendation ändras inte. Introduktionspassen ska genomföras med en erfaren volontär; portalen kontrollerar inte automatisk handledarnärvaro. Detta avsnitt ersätter äldre beskrivningar av spärrad självständig bokning före introduktion.

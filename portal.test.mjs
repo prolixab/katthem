@@ -1,3 +1,4 @@
+import {createRecurringBookings} from './recurring.mjs';
 import {createPasswordReset} from './password-reset.mjs';
 import {checklistGroups} from './checklist.mjs';
 import {test} from 'node:test';
@@ -93,10 +94,34 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const denied=await fetch(base+'/api/door-code',{method:'PUT',headers:{cookie:sa.cookie,origin:'https://evil.example','content-type':'application/json','X-Katthem':b},body:JSON.stringify({code:'ATTACK',revision:1})});assert.equal(denied.status,403);
   assert.equal((await call('portal/select','POST',{shelter:b},sa.cookie)).status,200);assert.equal((await(await call('state','GET',null,sa.cookie)).json()).portal.selected,b);
 
+  // New volunteers can self-book three introductions; the server handles series and concurrent requests atomically.
+  const introVolunteer=await login('person-b@example.se',b),introUid=introVolunteer.data.user.id;
+  const introSlots=[...new Map(introVolunteer.data.slots.filter(s=>s.kind==='regular'&&!s.cancelled&&new Date(s.date+'T'+s.start)>Date.now()+86400000*3).map(s=>[s.date,s])).values()].slice(0,10);
+  const anchorSlot=introSlots.find(s=>new Date(s.date+'T12:00').getDay()!==0),untilDate=new Date(anchorSlot.date+'T12:00');untilDate.setDate(untilDate.getDate()+21);
+  const until=untilDate.getFullYear()+'-'+String(untilDate.getMonth()+1).padStart(2,'0')+'-'+String(untilDate.getDate()).padStart(2,'0');
+  const tooMany={slotId:anchorSlot.id,interval:1,until,preview:true};assert.equal((await call('bookings/recurring','POST',tooMany,introVolunteer.cookie,b)).status,409);
+  const rawIntroDb=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite'));let oversizedPlan;
+  try{oversizedPlan=createRecurringBookings(rawIntroDb).preview(introUid,tooMany)}finally{rawIntroDb.close()}
+  assert.equal((await call('bookings/recurring','POST',{...tooMany,preview:false,key:oversizedPlan.key,confirmOverLimit:true},introVolunteer.cookie,b)).status,409);
+  const beforeIntro=await(await call('state','GET',null,introVolunteer.cookie,b)).json();assert.equal(beforeIntro.bookings.length,0);
+  for(const slot of introSlots.slice(0,2))assert.equal((await call('bookings','POST',{slotId:slot.id},introVolunteer.cookie,b)).status,200);
+  const races=await Promise.all(introSlots.slice(2,4).map(slot=>call('bookings','POST',{slotId:slot.id},introVolunteer.cookie,b)));assert.deepEqual(races.map(r=>r.status).sort(),[200,409]);
+  let introState=await(await call('state','GET',null,introVolunteer.cookie,b)).json();assert.equal(introState.user.engagement.intro_remaining,0);assert.equal(introState.bookings.length,3);
+  const introDenied=await call('bookings','POST',{slotId:introSlots[4].id,confirmOverLimit:true},introVolunteer.cookie,b);assert.equal(introDenied.status,409);assert.equal((await introDenied.json()).code,'INTRODUCTION_LIMIT');
+  assert.equal((await call('bookings/'+introState.bookings[0].id,'DELETE',null,introVolunteer.cookie,b)).status,200);assert.equal((await call('bookings','POST',{slotId:introSlots[4].id},introVolunteer.cookie,b)).status,200);
+  assert.equal((await call('bookings','POST',{slotId:introSlots[5].id,userId:introUid},sa.cookie,b)).status,200);
+  for(const item of checklistGroups.flatMap(g=>g.items))assert.equal((await call('checklist','PATCH',{item_id:item.id,checked:true},introVolunteer.cookie,b)).status,200);
+  for(const cookie of [sa.cookie,sameEmail.cookie]){const notificationState=await(await call('state','GET',null,cookie,b)).json();assert.ok(notificationState.introduction_pending.some(u=>u.id===introUid))}
+  assert.equal((await(await call('state','GET',null,introVolunteer.cookie,b)).json()).introduction_pending,undefined);
+  assert.ok(!(await(await call('state','GET',null,sa.cookie,'huskvarna')).json()).introduction_pending.some(u=>u.name==='Person B'));
+  assert.equal((await call('engagements/'+introUid+'/introduction','PATCH',{practical_completed:true,independent_approved:true},introVolunteer.cookie,b)).status,403);
+  assert.equal((await call('engagements/'+introUid+'/introduction','PATCH',{practical_completed:true,independent_approved:true},sameEmail.cookie,b)).status,200);
+  for(const cookie of [sa.cookie,sameEmail.cookie])assert.ok(!(await(await call('state','GET',null,cookie,b)).json()).introduction_pending.some(u=>u.id===introUid));
+  assert.equal((await call('bookings','POST',{slotId:introSlots[6].id},introVolunteer.cookie,b)).status,200);
   // Transfer keeps the password and total shifts, requires cancellation, and resets the destination checklist.
   const sourceDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));const past=Number(sourceDb.prepare("INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES('2000-01-01','08:00','12:00','Tidigare pass',0,'',0,'regular','')").run().lastInsertRowid);sourceDb.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(3,past);for(const item of checklistGroups.flatMap(g=>g.items))sourceDb.prepare('INSERT OR IGNORE INTO checklist_progress VALUES(?,?)').run(3,item.id);sourceDb.prepare('UPDATE users SET green_manual=1 WHERE id=3').run();sourceDb.close();
   const c=(await(await call('portal/manage/shelters','POST',{name:'Katthem C',address:'C-gatan 2'},sa.cookie)).json()).id;
-  assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:3,target:c,role:'volunteer',enabled:true},sa.cookie)).status,200);const cs=await(await call('state','GET',null,vol.cookie,c)).json(),cSlot=cs.slots.find(s=>!s.cancelled&&new Date(s.date+'T'+s.start)>Date.now()+86400000*2&&s.kind==='regular');assert.equal((await call('bookings','POST',{slotId:cSlot.id},vol.cookie,c)).status,409);assert.equal((await call('bookings','POST',{slotId:cSlot.id,userId:cs.user.id},sa.cookie,c)).status,200);const cDb=new DatabaseSync(path.join(dir,'shelters',c,'katthem.sqlite')),cPast=Number(cDb.prepare("INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES('2000-01-02','08:00','12:00','Tidigare C-pass',0,'',0,'regular','')").run().lastInsertRowid);cDb.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(cs.user.id,cPast);cDb.close();
+  assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:3,target:c,role:'volunteer',enabled:true},sa.cookie)).status,200);const cs=await(await call('state','GET',null,vol.cookie,c)).json(),cSlot=cs.slots.find(s=>!s.cancelled&&new Date(s.date+'T'+s.start)>Date.now()+86400000*2&&s.kind==='regular');assert.equal((await call('bookings','POST',{slotId:cSlot.id},vol.cookie,c)).status,200);assert.equal((await call('bookings','POST',{slotId:cSlot.id,userId:cs.user.id},sa.cookie,c)).status,409);const cDb=new DatabaseSync(path.join(dir,'shelters',c,'katthem.sqlite')),cPast=Number(cDb.prepare("INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES('2000-01-02','08:00','12:00','Tidigare C-pass',0,'',0,'regular','')").run().lastInsertRowid);cDb.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(cs.user.id,cPast);cDb.close();
   const activeA=await(await call('state','GET',null,vol.cookie,'huskvarna')).json(),futureSlot=activeA.slots.find(s=>!s.cancelled&&new Date(s.date+'T'+s.start)>Date.now()+86400000*2&&s.kind==='regular');assert.ok(futureSlot);assert.equal((await call('bookings','POST',{slotId:futureSlot.id},vol.cookie,'huskvarna')).status,200);
   const moveFields={source:'huskvarna',user_id:3,target:b};assert.equal((await call('portal/manage/transfers/preview','POST',moveFields,board.cookie)).status,401);assert.equal((await call('portal/manage/transfers/preview','POST',moveFields,sameEmail.cookie,b)).status,403);
   let preview=await(await call('portal/manage/transfers/preview','POST',moveFields,sa.cookie)).json();assert.equal(preview.can_move,false);assert.equal(preview.future.length,2);assert.equal((await call('portal/manage/transfers','POST',{...moveFields,key:preview.key},sa.cookie)).status,409);
