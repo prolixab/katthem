@@ -319,3 +319,11 @@ Rutinen dokumenteras i AGENTS.md. Det är en publiceringsrutin, ingen installera
 Standardvärdet är nu fem deltagare. Admin och superadmin ändrar rekommendationen under Administration → Bokningsrekommendation, mellan 2 och 100 personer. Värdet sparas separat för varje katthem och gäller alla pass och händelser. Inställningen gäller direkt utan omstart. Befintliga bokningar behålls och minimibemanningen är fortsatt två.
 
 Servern kontrollerar det aktuella värdet i bokningstransaktionen, även när flera bokar samtidigt. En extra bekräftelse krävs när rekommendationen uppnåtts, också när admin bokar åt andra och för återkommande bokningar. Ändrad rekommendation gör en tidigare förhandsgranskning av en återkommande serie inaktuell. Samtidiga inställningsändringar skyddas med revisionsnummer. Äldre avsnitt om sju deltagare beskriver tidigare versioner; denna inställning gäller nu.
+
+## Version 0.6.014 – infällda administrationsdelar
+
+Bokningsrekommendation är nu hopfällbar som övriga administrationsdelar. Alla delar, inklusive födelsedagar och styrelselistan, är stängda från början och vid byte av sida. Klicka på rubriken för att öppna en del. Öppna delar behålls vid omritning och sparning på samma sida.
+
+### Navigation mellan startsida och schema (0.6.014)
+
+Veckoschema i menyn öppnar schemavyn och rullar direkt till Veckans pass, med fokus på rubriken. Senast valda vecka och filter behålls. Loggan uppe till vänster är en tangentbordstillgänglig knapp till startsidans början; den återställer aktuell vecka, alla pass och mobil dagvy. Inloggning visar fortfarande startsidan från början.

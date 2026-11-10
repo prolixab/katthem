@@ -51,3 +51,10 @@ test('Introduktion och dagvy: nästa steg, färdiga steg och datum utanför veck
  h.context.state.user.engagement.routine_current=true;h.context.state.user.engagement.independent_approved=true;h.context.state.user.engagement.can_self_book=true;assert.match(vm.runInContext('introductionProgress()',h.context),/Du är redo att boka/);
  assert.equal(vm.runInContext("selectedScheduleDay(['2030-01-01','2030-01-02'])",h.context),'2030-01-02');assert.equal(vm.runInContext("selectedScheduleDay(['2030-02-01','2030-02-02'])",h.context),'2030-02-01');
 });
+
+test('Navigation: Veckoschema fokuserar passen, loggan återställer startsidan',()=>{
+ const source=appSource.slice(appSource.indexOf('function navigateSchedule('),appSource.indexOf('function render(){')),calls=[],heading={focus:o=>calls.push(['focus',o]),scrollIntoView:o=>calls.push(['scroll',o])};
+ const context=vm.createContext({view:'admin',offset:3,filter:'mine',scheduleDay:'2030-01-01',mobileWeek:true,adminSectionsOpen:new Set(['booking-settings']),render:()=>calls.push(['render']),$:selector=>{calls.push(['heading',selector]);return heading},window:{scrollTo:o=>calls.push(['top',o])}});
+ vm.runInContext(source+';navigateSchedule()',context);assert.equal(context.view,'schedule');assert.equal(context.offset,3);assert.equal(context.filter,'mine');assert.equal(context.adminSectionsOpen.size,0);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#schedule-heading'));assert.ok(calls.some(c=>c[0]==='scroll'));assert.ok(!calls.some(c=>c[0]==='top'));
+ calls.length=0;vm.runInContext('navigateSchedule(true)',context);assert.equal(context.offset,0);assert.equal(context.filter,'all');assert.equal(context.scheduleDay,'');assert.equal(context.mobileWeek,false);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#home-heading'));assert.ok(calls.some(c=>c[0]==='top'&&c[1].top===0));
+});
