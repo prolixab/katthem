@@ -31,7 +31,17 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal(sa.data.portal.global_superadmin,true);assert.equal(board.data.portal.shelters.length,1);assert.deepEqual(vol.data.portal.own_shelters.map(h=>h.id),['huskvarna']);assert.equal(vol.data.portal.own_shelters[0].status,'active');
   assert.equal((await call('portal/manage/shelters','POST',{name:'Otillåtet',address:'Fel'},board.cookie)).status,403);
   const created=await call('portal/manage/shelters','POST',{name:'Katthem B',address:'B-gatan 10'},sa.cookie);assert.equal(created.status,201);const b=(await created.json()).id;
+  const weekStart=sa.data.slots[0].date,rangeQuery='schedule?start='+weekStart+'&end='+weekStart;
+  assert.equal((await call(rangeQuery)).status,401);assert.equal((await call('schedule','GET',null,sa.cookie)).status,400);
+  const scheduleResponse=await call(rangeQuery,'GET',null,vol.cookie),weekData=await scheduleResponse.json();assert.equal(scheduleResponse.status,200);assert.ok(weekData.slots.every(s=>s.date===weekStart||s.mine));assert.equal(weekData.members,undefined);assert.ok(weekData.bookings.every(b=>b.user_id===vol.data.user.id));
+  assert.equal((await call(rangeQuery,'GET',null,vol.cookie,b)).status,403);
   assert.equal((await call('state','GET',null,board.cookie,b)).status,403);assert.equal((await call('state','GET',null,vol.cookie,b)).status,403);
+  const aSettings=(await(await call('state','GET',null,board.cookie,'huskvarna')).json()).booking_settings;assert.equal(aSettings.recommended_limit,5);
+  assert.equal((await call('booking-settings','PUT',{recommended_limit:6,revision:aSettings.revision},vol.cookie,'huskvarna')).status,403);
+  assert.equal((await call('booking-settings','PUT',{recommended_limit:6,revision:aSettings.revision},board.cookie,'huskvarna')).status,200);
+  assert.equal((await call('booking-settings','PUT',{recommended_limit:7,revision:aSettings.revision},board.cookie,'huskvarna')).status,409);
+  assert.equal((await(await call('state','GET',null,sa.cookie,b)).json()).booking_settings.recommended_limit,5);
+  assert.equal((await call('booking-settings','PUT',{recommended_limit:5,revision:aSettings.revision+1},board.cookie,'huskvarna')).status,200);
   let bs=await(await call('state','GET',null,sa.cookie,b)).json();assert.equal(bs.portal.selected,b);assert.equal(bs.volunteer_info.location,'B-gatan 10');assert.equal(bs.door_code.code,'');assert.ok(!bs.users.some(u=>u.email==='vol@example.se'));assert.ok(!bs.users.some(u=>u.email==='admin@katthem.local'));
   const brandB={...bs.branding,primary:'#334455'};assert.equal((await call('branding','PUT',brandB,vol.cookie,'huskvarna')).status,403);assert.equal((await call('branding','PUT',brandB,sa.cookie,b)).status,200);assert.equal((await(await call('branding','GET',null,undefined,b)).json()).primary,'#334455');assert.equal((await(await call('state','GET',null,sa.cookie,'huskvarna')).json()).branding.primary,sa.data.branding.primary);
   assert.equal((await call('door-code','PUT',{code:'B-CODE',revision:bs.door_code.revision},sa.cookie,b)).status,200);

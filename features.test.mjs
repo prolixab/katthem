@@ -1,3 +1,4 @@
+import {createBookingSettings} from './booking-settings.mjs';
 import {runInNewContext} from 'node:vm';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -155,4 +156,22 @@ test('Lösenordsåterställning: sparandet använder länkens katthem även när
  runInNewContext(reset+';resetPassword("token-b")',context);selected='hem-a';
  await form.onsubmit({preventDefault(){},target:{querySelector:()=>button}});
  assert.equal(calls.length,1);assert.equal(calls[0][0],'password-reset/confirm');assert.equal(calls[0][2].token,'token-b');assert.equal(calls[0][3],'hem-b');
+});
+
+test('Bokningsrekommendation: fem som standard, validering, sparning, samtidighet och separata katthem',()=>{
+ const a=new DatabaseSync(':memory:'),b=new DatabaseSync(':memory:');try{
+  const settings=createBookingSettings(a),other=createBookingSettings(b);assert.equal(settings.get().recommended_limit,5);
+  for(const value of [1,101,2.5,'6',null])assert.throws(()=>settings.save({recommended_limit:value,revision:0}),e=>e.status===400);
+  assert.equal(settings.save({recommended_limit:8,revision:0}).recommended_limit,8);assert.equal(createBookingSettings(a).get().recommended_limit,8);assert.equal(other.get().recommended_limit,5);
+  assert.throws(()=>settings.save({recommended_limit:6,revision:0}),e=>e.status===409);assert.equal(settings.get().recommended_limit,8);
+  assert.equal(settings.save({recommended_limit:2,revision:1}).recommended_limit,2);assert.equal(settings.save({recommended_limit:100,revision:2}).recommended_limit,100);
+ }finally{a.close();b.close()}
+});
+test('Återkommande: aktuell rekommendation och ändrad gräns kräver ny förhandsgranskning',()=>{
+ const {db,p}=recurringFixture();let limit=5;const service=createRecurringBookings(db,{recommendedLimit:()=>limit});try{
+  for(let i=3;i<8;i++)db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,1)').run(i);
+  const plan=service.preview(1,p);assert.equal(plan.recommended_limit,5);assert.equal(plan.rows[0].over_limit,true);
+  limit=6;const fresh=service.preview(1,p);assert.equal(fresh.rows[0].over_limit,false);assert.notEqual(fresh.key,plan.key);assert.throws(()=>service.book(1,{...p,key:plan.key,confirmOverLimit:true}),e=>e.code==='STALE_RECURRING');
+  assert.equal(service.book(1,{...p,key:fresh.key}),2);
+ }finally{db.close()}
 });

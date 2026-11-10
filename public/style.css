@@ -60,3 +60,8 @@ button.primary,.filters .selected,.day-head.today strong,#toast{background:var(-
 .password-required{max-width:600px;margin:30px auto}.password-required h1{font-size:28px;margin-top:24px}input[type=color]{height:48px;padding:4px}
 dialog{background:var(--surface,#fff)}.slot.booked{background:color-mix(in srgb,var(--green) 12%,var(--surface,#fff))}.nav button.active,.badge{color:var(--ink)}.login-form>.brand{display:none}.login-art .small,.login-art .eyebrow{color:var(--on-primary,#fff)!important}
 @media(max-width:850px){.login-form>.brand{display:flex;margin-bottom:26px}}
+
+/* A day at a time on smaller screens; the full week remains available. */
+.mobile-calendar{display:none}.introduction-progress{margin:0 0 24px}.introduction-progress ol{list-style:none;padding:0;display:grid;gap:8px}.introduction-progress li{padding:9px 12px;border:1px solid var(--line);border-radius:8px}.introduction-progress .step-done{border-left:4px solid var(--green)}
+@media(max-width:850px){.mobile-calendar{display:block;margin:18px 0}.mobile-day-picker{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.mobile-day-picker button{min-width:0;min-height:52px;padding:6px 2px}.mobile-day-picker span,.mobile-day-picker strong{display:block}.mobile-day-picker span{font-size:11px}.mobile-day-picker [aria-pressed=true]{background:var(--green);color:var(--on-primary,#fff);border-color:var(--green)}.week-grid:not(.show-week){grid-template-columns:minmax(0,1fr)}.week-grid:not(.show-week)>section:not(.selected-day){display:none}.slot button{min-height:44px}.mobile-calendar .toolbar{gap:8px}}
+@media(max-width:420px){.week-grid.show-week{grid-template-columns:minmax(0,1fr)}}

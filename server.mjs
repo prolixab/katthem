@@ -1,3 +1,5 @@
+import {createBookingSettings} from './booking-settings.mjs';
+import {scheduleData,scheduleRange} from './schedule-data.mjs';
 import {initPasswordPolicy,requiresPasswordChange,setPasswordChange} from './password-policy.mjs';
 import {createBranding} from './branding.mjs';
 import {createEngagement} from './engagement.mjs';
@@ -42,7 +44,8 @@ db.exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS users(id INTEGER PRI
 const members=createMembers(db);
 const volunteers=createVolunteers(db,members,hash);
 const news=createNews(db);
-const recurring=createRecurringBookings(db);
+const bookingSettings=createBookingSettings(db);
+const recurring=createRecurringBookings(db,{recommendedLimit:()=>bookingSettings.get().recommended_limit});
 db.exec('CREATE TABLE IF NOT EXISTS calendar_subscriptions(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,token TEXT NOT NULL UNIQUE)');
 db.exec("CREATE TABLE IF NOT EXISTS door_access(id INTEGER PRIMARY KEY CHECK(id=1),code TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);INSERT OR IGNORE INTO door_access(id) VALUES(1);");
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='carried_shifts'))db.exec('ALTER TABLE users ADD COLUMN carried_shifts INTEGER NOT NULL DEFAULT 0');
@@ -144,6 +147,7 @@ const checklistIds=new Set(checklistGroups.flatMap(group=>group.items.map(item=>
 const engagements=createEngagement(db);engagements.setChecklistIds(checklistIds);
 db.exec('CREATE TABLE IF NOT EXISTS checklist_progress(user_id INTEGER NOT NULL REFERENCES users(id),item_id TEXT NOT NULL,PRIMARY KEY(user_id,item_id))');
 const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
+db.exec('CREATE INDEX IF NOT EXISTS slots_date_start ON slots(date,start); CREATE INDEX IF NOT EXISTS bookings_slot_id ON bookings(slot_id)');
 const sessions=db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token=? AND expires>? AND active=1');
 function completedCounts(userId){
  const counts=new Map(),now=Date.now();counts.last=new Map();for(const u of db.prepare('SELECT id,carried_shifts FROM users').all())counts.set(u.id,u.carried_shifts);
@@ -160,10 +164,10 @@ function snapshot(user){
  const shelter=shelterFor(user.id);
  const counts=completedCounts();
  const greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
- const greenCounts=new Map();for(const b of db.prepare('SELECT user_id,slot_id FROM bookings').all())if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
+
  const directory=members.list().flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  const contacts=members.list().filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
- return {branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?members.list():undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),slots:db.prepare('SELECT s.*,EXISTS(SELECT 1 FROM volunteer_meeting_origins v WHERE v.slot_id=s.id) volunteer_meeting,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s ORDER BY date,start').all(user.id).map(s=>({...s,green_booked:greenCounts.get(s.id)||0})),bookings:isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id').all():db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ return {booking_settings:bookingSettings.get(),branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?members.list():undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),...scheduleData(db,user,greenIds),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -237,6 +241,11 @@ const server=http.createServer(async(req,res)=>{
   }
  }
  if(url.pathname==='/api/state'&&req.method==='GET')return send(snapshot(user));
+ if(url.pathname==='/api/schedule'&&req.method==='GET'){
+  const range=scheduleRange(url.searchParams);ensureOpenHouse();schedule.ensure();
+  const counts=completedCounts(),greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
+  return send({...scheduleData(db,user,greenIds,range),schedule_range:range,booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{groups:checklistGroups,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
+ }
  if(url.pathname==='/api/profile'&&req.method==='PATCH'){
   const p=await body(req),allowed=['name','email','phone','messenger_url','birth_date','revision'];if(!p||Object.keys(p).some(k=>!allowed.includes(k))||!Number.isInteger(p.revision))fail('Endast egna kontaktuppgifter kan ändras här.');
   const profile=db.prepare('SELECT * FROM member_profiles WHERE user_id=?').get(user.id);if(!profile)fail('Profilen finns inte.',404);if(engagements.get(user.id)?.status==='purged')fail('Engagemanget har gallrats.',403);
@@ -262,7 +271,8 @@ const server=http.createServer(async(req,res)=>{
  if(new Date(slot.date+'T'+slot.start+':00')<=new Date())fail('Passet har redan börjat.');
  if(!db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(uid))fail('Volontären är inte aktiv.');
  if(db.prepare('SELECT id FROM bookings WHERE user_id=? AND slot_id=?').get(uid,slot.id))fail('Passet är redan bokat.',409);
- if(db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=7&&p.confirmOverLimit!==true)fail('Det är redan minst 7 anmälda. Vill du boka ändå?',409,'RECOMMENDED_LIMIT');
+ const recommendedLimit=bookingSettings.get().recommended_limit;
+ if(db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=recommendedLimit&&p.confirmOverLimit!==true)fail('Det är redan minst '+recommendedLimit+' anmälda. Vill du boka ändå?',409,'RECOMMENDED_LIMIT');
  const overlaps=db.prepare('SELECT s.title,s.start,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id=? AND s.date=? AND s.start<? AND s.end>?').all(uid,slot.date,slot.end,slot.start);
  if(overlaps.length&&p.confirmOverlap!==true)fail('Bokningen överlappar '+overlaps.map(s=>s.title+' '+s.start+'–'+s.end).join(', ')+' den '+slot.date+'. Vill du boka ändå?',409,'OVERLAPPING_BOOKING');
  db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(uid,slot.id);db.exec('COMMIT');
@@ -296,6 +306,7 @@ const server=http.createServer(async(req,res)=>{
  }
  if(/^\/api\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){const p=await body(req);news.dismiss(user.id,Number(url.pathname.split('/')[3]),p.revision);return send(snapshot(user))}
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(url.pathname==='/api/booking-settings'&&req.method==='PUT'){bookingSettings.save(await body(req));return send(snapshot(user))}
  if(/^\/api\/members\/\d+\/phone$/.test(url.pathname)&&req.method==='PATCH'){
   const id=Number(url.pathname.split('/')[3]),p=await body(req);if(typeof p.phone!=='string'||p.phone.length>100||/[\r\n\0]/.test(p.phone)||!Number.isInteger(p.revision)||Object.keys(p).some(k=>!['phone','revision'].includes(k)))fail('Ange telefonnummer med högst 100 tecken och öppna formuläret igen vid behov.');
   if(!db.prepare('SELECT id FROM member_profiles WHERE id=?').get(id))fail('Volontärprofilen finns inte.',404);
@@ -399,7 +410,7 @@ const server=http.createServer(async(req,res)=>{
  }
  fail('Sidan finns inte.',404);
  }
- const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};const file=files[url.pathname];if(!file){res.writeHead(404);return res.end('Not found')}
+ const files={'/':'index.html','/app.js':'app.js','/schedule-view.js':'schedule-view.js','/style.css':'style.css'};const file=files[url.pathname];if(!file){res.writeHead(404);return res.end('Not found')}
  res.setHeader('Cache-Control','no-store');
  res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.',code:e.status?e.code:undefined},e.status||500)}

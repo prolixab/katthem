@@ -297,3 +297,25 @@ Manuell testning: kontrollera nytt färgval, logotyp och standardåterställning
 ## Lösenordsåterställning för flera katthem
 
 Nya återställningslänkar innehåller katthemmets identifierare i parametern `shelter`. Länken väljer rätt katthem även i en ny webbläsare, och sparandet använder samma katthem även om väljaren ändras medan formuläret är öppet. Token ligger fortsatt i URL-fragmentet och tas bort ur adressfältet när formuläret öppnas. Äldre länkar utan katthem använder det aktuella valet; begär en ny länk om återställningen inte fungerar.
+
+## Version 0.6.012 – schema, introduktion och mobilvy
+
+På mobil visar Veckoschema en dag i taget med datumknappar och valet Visa hela veckan. Filtren gäller båda vyerna. Introduktionsöversikten i schemat och Praktisk information visar klara steg och leder till checklistan, rutinerna eller kontaktpersonerna. Admin registrerar fortsatt praktisk introduktion och godkännande.
+
+Automatiska uppdateringar körs bara i Veckoschema och Mina bokningar. De bevarar fokus och rullningsläge, väntar vid formulärfält eller öppna dialoger och kastar svar om användaren hunnit byta vy, vecka eller katthem. Schemarenderingen har flyttats till public/schedule-view.js, som laddas före app.js. Manualen under Praktisk information beskriver de nya flödena och lösenordsåterställningen för flera katthem.
+
+### Begränsade schemauppdateringar
+
+Bakgrundsuppdateringen använder GET /api/schedule?start=ÅÅÅÅ-MM-DD&end=ÅÅÅÅ-MM-DD. Intervallet valideras och får vara högst 31 dagar. Svaret innehåller intervallets pass och användarens egna bokade pass även utanför intervallet; administratörer får deltagaruppgifter endast för dessa pass. Övriga volontärers privata profiler skickas inte i detta svar. Fullständig hämtning används fortsatt vid inloggning, veckobyten och bokningsändringar. Frågor och renderingen för schemat har separerats i schedule-data.mjs respektive public/schedule-view.js. Databasen får index för datum och passbokningar.
+
+## Uppdateringsnyheter vid publicering
+
+Vid varje uppdatering som pushas ska en kort svensk nyhet med versionsnummer och användarsammanfattning publiceras via den befintliga gemensamma nyhetsfunktionen för alla katthem. Sluttiden är exakt 72 timmar efter den lyckade pushen. Omstart eller senare driftsättning ska inte förlänga tiden. Nyheten finns på Anslagstavlan fram till sluttiden; startsidans nyhet kan döljas personligen enligt befintligt beteende.
+
+Rutinen dokumenteras i AGENTS.md. Det är en publiceringsrutin, ingen installerad automatisk integration med GitHub. Publicering kräver åtkomst till den driftsatta portalen; lokala nyheter synkas inte till servern via Git. Utkast för den väntande uppdateringen finns i docs/uppdateringsnyhet-0.6.012.md. Faktisk pushtid och sluttid fastställs först när pushen har lyckats.
+
+## Version 0.6.013 – inställbar bokningsrekommendation
+
+Standardvärdet är nu fem deltagare. Admin och superadmin ändrar rekommendationen under Administration → Bokningsrekommendation, mellan 2 och 100 personer. Värdet sparas separat för varje katthem och gäller alla pass och händelser. Inställningen gäller direkt utan omstart. Befintliga bokningar behålls och minimibemanningen är fortsatt två.
+
+Servern kontrollerar det aktuella värdet i bokningstransaktionen, även när flera bokar samtidigt. En extra bekräftelse krävs när rekommendationen uppnåtts, också när admin bokar åt andra och för återkommande bokningar. Ändrad rekommendation gör en tidigare förhandsgranskning av en återkommande serie inaktuell. Samtidiga inställningsändringar skyddas med revisionsnummer. Äldre avsnitt om sju deltagare beskriver tidigare versioner; denna inställning gäller nu.
