@@ -16,6 +16,7 @@ services:
       PORT: "3080"
       DATA_DIR: /app/data
       TZ: Europe/Stockholm
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-1}
     expose:
       - "3080"
     volumes:

@@ -154,6 +154,32 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const lifeAgain=await login('lifecycle@example.se');assert.equal(lifeAgain.data.redirect_home,true);ls=await(await call('state','GET',null,lifeAgain.cookie)).json();assert.equal(ls.portal.selected,b);assert.equal(ls.user.id,lifeB);assert.deepEqual(ls.portal.own_shelters.map(h=>h.id),[b]);assert.equal((await call('state','GET',null,lifeAgain.cookie,'huskvarna')).status,403);
   const adminRoster=await(await call('state','GET',null,sa.cookie,'huskvarna')).json();assert.ok(!adminRoster.users.some(u=>u.id===lifeId));assert.equal(lifeAData.prepare('SELECT COUNT(*) n FROM member_profiles WHERE user_id=?').get(lifeId).n,0);
   assert.equal((await call('portal/engagement','PATCH',{status:'ended',scope:'one',revision:ls.user.engagement.revision},lifeAgain.cookie,b)).status,200);const lifeBData=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite'));lifeBData.prepare('UPDATE engagements SET purge_after=1 WHERE user_id=?').run(lifeB);await portal.maintenance();assert.equal(lifeAData.prepare('SELECT active FROM users WHERE id=?').get(lifeId).active,0);assert.equal((await call('login','POST',{email:'lifecycle@example.se',password,portal_shelter:'huskvarna'})).status,401);lifeAData.close();lifeBData.close();
+  // Renaming is restricted, survives restart, and never moves accounts or bookings.
+  const beforeRename=await(await call('state','GET',null,sa.cookie,b)).json(),oldName=beforeRename.shelter.name,renameRoute='portal/manage/shelters/'+b;
+  assert.equal((await call(renameRoute,'PATCH',{name:'Nytt',previous_name:oldName})).status,401);
+  assert.equal((await call(renameRoute,'PATCH',{name:'Nytt',previous_name:oldName},sameEmail.cookie)).status,403);
+  assert.equal((await call(renameRoute,'PATCH',{name:'Nytt',previous_name:oldName},newHomeLogin.cookie)).status,403);
+  for(const name of ['', '   ', 'x'.repeat(101), 'Fel\nnamn'])assert.equal((await call(renameRoute,'PATCH',{name,previous_name:oldName},sa.cookie)).status,400);
+  assert.equal((await call(renameRoute,'PATCH',{name:'Huskvarna / Jönköping',previous_name:oldName},sa.cookie)).status,400);
+  assert.equal((await call('portal/manage/shelters/missing','PATCH',{name:'Nytt',previous_name:'Saknas'},sa.cookie)).status,404);
+  assert.equal((await call(renameRoute,'PATCH',{name:'Nytt',previous_name:'Inaktuellt'},sa.cookie)).status,409);
+  const newName='Ådala katthem & jourhem';assert.equal((await call(renameRoute,'PATCH',{name:' '+newName+' ',previous_name:oldName},sa.cookie)).status,200);
+  const afterRename=await(await call('state','GET',null,sa.cookie,b)).json();assert.equal(afterRename.shelter.name,newName);assert.equal(afterRename.shelter_admin.name,newName);assert.equal(afterRename.portal.selected,b);assert.ok(afterRename.members.every(m=>m.shelter===newName));
+  assert.deepEqual(afterRename.bookings,beforeRename.bookings);assert.deepEqual(afterRename.users,beforeRename.users);assert.deepEqual(afterRename.volunteer_info,beforeRename.volunteer_info);assert.deepEqual(afterRename.door_code,beforeRename.door_code);
+  assert.equal((await(await call('portal')).json()).shelters.find(h=>h.id===b).name,newName);
+  assert.equal((await call(renameRoute,'PATCH',{name:'Förlorad ändring',previous_name:oldName},sa.cookie)).status,409);
+  const savedProfile=await call('volunteers','POST',{...form,name:'Efter namnbyte',email:'after-rename@example.se'},sa.cookie,b);assert.equal(savedProfile.status,200);
+  const renamedDb=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite'));assert.equal(renamedDb.prepare('SELECT shelter FROM member_profiles WHERE email=?').get('after-rename@example.se').shelter,newName);renamedDb.close();
+  await portal.close();portal=null;portal=await createPortal({dataDir:dir,port:Number(new URL(base).port),env:{...process.env,NODE_ENV:'test',APP_URL:'',RESEND_API_KEY:'',EMAIL_FROM:'',BOOTSTRAP_SUPERADMIN_EMAIL:''}});
+  assert.equal((await(await call('portal')).json()).shelters.find(h=>h.id===b).name,newName);assert.equal((await(await call('state','GET',null,sa.cookie,b)).json()).shelter_admin.name,newName);
+  // Operational tools are scoped and privileged; failed writes never enter the audit history.
+  assert.equal((await call('portal/audit')).status,401);assert.equal((await call('portal/audit','GET',null,newHomeLogin.cookie,b)).status,403);
+  const history=(await(await call('portal/audit','GET',null,sameEmail.cookie,b)).json()).entries;assert.ok(history.some(e=>e.action==='introduction.approved'));assert.ok(history.some(e=>e.action==='shelter.renamed'));assert.ok(history.every(e=>e.home===b&&e.actor_name));
+  assert.equal((await call('booking-settings','PUT',{recommended_limit:0,revision:0},sameEmail.cookie,b)).status,400);assert.equal((await(await call('portal/audit','GET',null,sameEmail.cookie,b)).json()).entries.length,history.length);
+  assert.equal((await call('portal/manage/backups','GET',null,sameEmail.cookie)).status,403);assert.equal((await call('portal/manage/backups','POST',{},newHomeLogin.cookie)).status,403);
+  const copyResponse=await call('portal/manage/backups','POST',{},sa.cookie);assert.equal(copyResponse.status,200,await copyResponse.clone().text());const copy=await copyResponse.json();assert.ok(copy.verified_at);
+  const backupStatus=await(await call('portal/manage/backups','GET',null,sa.cookie)).json();assert.equal(backupStatus.copies.length,1);assert.ok(backupStatus.last_success);assert.equal(backupStatus.automatic_enabled,false);
+  assert.equal((await call('portal/manage/backups/verify','POST',{id:copy.id},sa.cookie)).status,200);assert.equal((await call('portal/manage/backups/verify','POST',{id:'../invalid'},sa.cookie)).status,404);
   const registry=new DatabaseSync(path.join(dir,'shelters.sqlite'));assert.equal(registry.prepare('SELECT COUNT(*) n FROM shelters').get().n,3);registry.close();
  }finally{if(portal)await portal.close();rmSync(dir,{recursive:true,force:true})}
 });

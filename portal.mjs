@@ -1,3 +1,5 @@
+import {createBackups} from './backups.mjs';
+import {createAudit} from './audit.mjs';
 import {requiresPasswordChange} from './password-policy.mjs';
 import {createBranding} from './branding.mjs';
 import {createPortalEngagement} from './portal-engagement.mjs';
@@ -22,6 +24,15 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  CREATE TABLE IF NOT EXISTS shadows(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,local_id INTEGER NOT NULL,PRIMARY KEY(source,user_id,target),UNIQUE(target,local_id));`);
  registry.prepare('INSERT OR IGNORE INTO shelters VALUES(?,?)').run(primary,'Huskvarna / Jönköping');
  registry.exec('CREATE TABLE IF NOT EXISTS shadow_profile_sync(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,values_json TEXT NOT NULL,PRIMARY KEY(source,user_id,target))');
+ const audit=createAudit(registry),backups=createBackups({dataDir,backupDir:env.BACKUP_DIR||path.join(dataDir,'backups')});
+ const backupsEnabled=(env.BACKUP_ENABLED??(env.NODE_ENV==='test'?'0':'1'))!=='0';
+ let backupBusy=false,activeRequests=0,backupTask=null;
+ async function runBackup(){
+  if(backupBusy)fail('En säkerhetskopiering pågår redan.',409);backupBusy=true;
+  const task=(async()=>{const deadline=Date.now()+30000;while(activeRequests){if(closing||Date.now()>deadline)throw Error('Pågående arbete kunde inte avslutas före säkerhetskopieringen.');await new Promise(r=>setTimeout(r,20))}if(closing)throw Error('Portalen stängs.');return backups.create()})();backupTask=task;
+  try{return await task}catch(error){backups.failed();throw error}finally{backupBusy=false;backupTask=null}
+ }
+ async function maybeBackup(){if(backupsEnabled&&!closing&&!backupBusy&&backups.due())try{await runBackup()}catch{console.error('Säkerhetskopieringen kunde inte slutföras; status visas för superadmin.')}}
  const rates=new Map();
  const workers=new Map(),starts=new Map(),secret=randomBytes(32).toString('hex');let closing=false;
  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
@@ -32,7 +43,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   if(workers.has(id))return workers.get(id);if(starts.has(id))return starts.get(id);
   if(!house(id))fail('Katthemmet finns inte.',404);
   const promise=(async()=>{
-   const child=spawn(process.execPath,[path.join(root,'server.mjs')],{cwd:root,env:{...env,HOST:'127.0.0.1',PORT:'0',DATA_DIR:folder(id),PORTAL_PUBLIC_URL:env.APP_URL||'http://'+host+':'+port,PORTAL_SHELTER_ID:id,PORTAL_SHELTER_NAME:house(id).name,GATEWAY_SECRET:secret,EMPTY_SHELTER:id===primary?'':'1',BOOTSTRAP_SUPERADMIN_EMAIL:id===primary?(env.BOOTSTRAP_SUPERADMIN_EMAIL||''):'',RESEND_API_KEY:id===primary?(env.RESEND_API_KEY||''):'',EMAIL_FROM:id===primary?(env.EMAIL_FROM||''):''},windowsHide:true,stdio:['ignore','pipe','pipe']});
+   const child=spawn(process.execPath,[path.join(root,'server.mjs')],{cwd:root,env:{...env,HOST:'127.0.0.1',PORT:'0',DATA_DIR:folder(id),PORTAL_PUBLIC_URL:env.APP_URL||'http://'+host+':'+port,PORTAL_SHELTER_ID:id,PORTAL_SHELTER_NAME:house(id).name,PORTAL_REGISTRY_PATH:path.join(dataDir,'shelters.sqlite'),GATEWAY_SECRET:secret,EMPTY_SHELTER:id===primary?'':'1',BOOTSTRAP_SUPERADMIN_EMAIL:id===primary?(env.BOOTSTRAP_SUPERADMIN_EMAIL||''):'',RESEND_API_KEY:id===primary?(env.RESEND_API_KEY||''):'',EMAIL_FROM:id===primary?(env.EMAIL_FROM||''):''},windowsHide:true,stdio:['ignore','pipe','pipe']});
    let address;try{address=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Katthemmet kunde inte starta.')),45000);child.stdout.on('data',chunk=>{const match=chunk.toString().match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0])}});child.on('error',reject);child.once('exit',()=>{clearTimeout(timer);reject(Error('Katthemmets server stoppades.'))})})}catch(e){child.kill();throw e}
    const db=new DatabaseSync(path.join(folder(id),'katthem.sqlite'));db.exec('PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000');
    const result={child,db,address};workers.set(id,result);child.on('exit',()=>{workers.delete(id);db.close();if(!closing)console.error('Katthemmet behöver startas om:',id)});return result;
@@ -77,8 +88,12 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  function json(bytes){try{return JSON.parse(bytes.toString()||'{}')}catch{fail('Ogiltiga uppgifter.')}}
  const server=http.createServer(async(req,res)=>{
   const send=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data))};
+  let tracked=false;
   try{
    const url=new URL(req.url,'http://localhost'),write=!['GET','HEAD'].includes(req.method);
+   const backupRoute=url.pathname.startsWith('/api/portal/manage/backups');
+   if(backupBusy&&!backupRoute&&url.pathname!=='/healthz')fail('Säkerhetskopiering pågår. Försök igen om en liten stund.',503);
+   if(!backupRoute&&url.pathname!=='/healthz'){activeRequests++;tracked=true}
    const origin=env.APP_URL?new URL(env.APP_URL).origin:'http://'+req.headers.host;
    if(write&&req.headers.origin&&req.headers.origin!==origin)fail('Begäran blockerades.',403);
    if(write&&['/api/login','/api/password-reset/request','/api/password-reset/confirm'].includes(url.pathname)){const family=url.pathname==='/api/login'?'login':'reset',key=family+':'+req.socket.remoteAddress;let rate=rates.get(key);if(!rate||rate.until<Date.now()){rate={count:0,until:Date.now()+60000};rates.set(key,rate)}if(++rate.count>(family==='login'?15:10))fail('För många försök. Vänta en minut.',429)}
@@ -107,13 +122,26 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     if(url.pathname==='/api/portal/transfers'&&req.method==='GET'){const users=[];for(const h of allowed){const w=await worker(h.id);for(const u of w.db.prepare("SELECT id,name,email,role,active FROM users WHERE active=1 AND role='volunteer' ORDER BY name").all())if(!registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(h.id,u.id)&&!registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(h.id,u.id))users.push({...u,source:h.id})}return send({shelters:allowed,users})}
     if(['/api/portal/transfers/preview','/api/portal/transfers'].includes(url.pathname)&&req.method==='POST'){const fields=json(payload),ids=allowed.map(h=>h.id);if(!ids.includes(fields.source)||!ids.includes(fields.target))fail('Du behöver adminbehörighet i båda katthemmen.',403);const extra=registry.prepare('SELECT target FROM shadows WHERE source=? AND user_id=? AND target<>?').all(fields.source,fields.user_id,fields.target);if(extra.some(e=>!ids.includes(e.target)))fail('Personen har kopplingar till andra katthem. Be superadmin hjälpa till med flytten.',403);await worker(fields.source);await worker(fields.target);const safe={...fields,volunteers_only:true,allowed_homes:ids};if(url.pathname.endsWith('/preview'))return send(transfers.preview(safe));const result=transfers.move(safe);await reconcile();return send(result)}
     fail('Funktionen finns inte.',404);
+   }else if(url.pathname==='/api/portal/audit'&&req.method==='GET'){
+    if(!p)fail('Logga in för att fortsätta.',401);if(!house(target)||!['admin','superadmin'].includes(access(p,target)))fail('Du saknar administratörsbehörighet.',403);
+    return send({entries:audit.list(target).map(entry=>({...entry,actor_name:workers.get(entry.actor_home)?.db.prepare('SELECT name FROM users WHERE id=?').get(entry.actor_id)?.name||'Tidigare administratör'}))});
    }else if(url.pathname.startsWith('/api/portal/manage')){
     if(!p)fail('Logga in för att fortsätta.',401);if(!p.global)fail('Endast superadmin kan hantera katthem och åtkomst.',403);
+    if(url.pathname==='/api/portal/manage/backups'&&req.method==='GET')return send({...backups.status(),automatic_enabled:backupsEnabled});
+    if(url.pathname==='/api/portal/manage/backups'&&req.method==='POST'){const copy=await runBackup();audit.record({home:target,actor:p,action:'backup.created'});return send(copy)}
+    if(url.pathname==='/api/portal/manage/backups/verify'&&req.method==='POST'){const fields=json(payload);let result;try{result=backups.verify(fields.id)}catch(error){fail(error.status?error.message:'Säkerhetskopian klarade inte återläsningskontrollen.',error.status||503)}audit.record({home:target,actor:p,action:'backup.verified'});return send(result)}
     if(url.pathname==='/api/portal/manage/news'&&req.method==='POST')return send({id:portalNews.save(null,json(payload))});
     if(/^\/api\/portal\/manage\/news\/\d+$/.test(url.pathname)&&['PUT','DELETE'].includes(req.method)){const fields=json(payload),id=Number(url.pathname.split('/').pop());if(req.method==='DELETE')portalNews.remove(id,fields.revision);else portalNews.save(id,fields);return send({ok:true})}
     if(url.pathname==='/api/portal/manage'&&req.method==='GET'){
      const users=[];for(const h of houses()){const w=await worker(h.id);for(const u of w.db.prepare('SELECT id,name,email,role,active FROM users ORDER BY name').all()){if(!registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(h.id,u.id))users.push({...u,source:h.id})}}
      return send({shelters:houses(),users,grants:registry.prepare('SELECT * FROM grants ORDER BY source,user_id,target').all()});
+    }
+    if(/^\/api\/portal\/manage\/shelters\/[a-z0-9-]+$/.test(url.pathname)&&req.method==='PATCH'){
+     const id=url.pathname.split('/').pop(),current=house(id);if(!current)fail('Katthemmet finns inte.',404);
+     const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||/[\x00-\x1f\x7f]/.test(fields.name)||typeof fields.previous_name!=='string')fail('Ange ett namn med 1–100 tecken och öppna formuläret igen vid behov.');
+     const name=fields.name.trim();if(houses().some(h=>h.id!==id&&h.name.toLocaleLowerCase('sv-SE')===name.toLocaleLowerCase('sv-SE')))fail('Ett annat katthem har redan det namnet.');
+     const changed=registry.prepare('UPDATE shelters SET name=? WHERE id=? AND name=?').run(name,id,fields.previous_name);if(!changed.changes)fail('Namnet har ändrats av någon annan. Stäng och öppna katthemslistan innan du sparar igen.',409);
+     audit.record({home:id,actor:p,action:'shelter.renamed',details:{name}});return send({id,name});
     }
     if(url.pathname==='/api/portal/manage/shelters'&&req.method==='POST'){
      const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||typeof fields.address!=='string'||fields.address.length>4000)fail('Ange katthemmets namn och adress.');if(houses().length>=50)fail('Högst 50 katthem kan läggas till.');
@@ -150,6 +178,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(p&&access(p,target))await syncGrantedProfiles(target);
    const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
    const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
+   if(result.ok&&write&&p&&['admin','superadmin'].includes(access(p,target))){const event=audit.fromRequest(url.pathname,req.method,payload?json(payload):{});if(event)audit.record({home:target,actor:p,...event})}
    if(result.ok&&write&&/^\/api\/(users|volunteers|members|profile)(\/|$)/.test(url.pathname))await reconcile();
    const contentType=result.headers.get('content-type')||'',buffer=Buffer.from(await result.arrayBuffer());
    if(url.pathname==='/api/login'&&result.ok){
@@ -158,11 +187,12 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }
    if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(data,result.status)}
    for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
-  }catch(e){if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}
+  }catch(e){if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}finally{if(tracked)activeRequests--}
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve)});
- const lifecycleTimer=setInterval(()=>{try{lifecycle.purge()}catch{console.error('Gallring kunde inte slutföras; nytt försök görs automatiskt.')}},60000);lifecycleTimer.unref();
- const close=async()=>{clearInterval(lifecycleTimer);closing=true;await new Promise(r=>server.close(r));await Promise.all([...workers.values()].map(w=>new Promise(r=>{if(w.child.exitCode!==null)return r();w.child.once('exit',r);w.child.kill()})));registry.close()};
+ const startupBackup=setTimeout(()=>{void maybeBackup()},1000);startupBackup.unref();
+ const lifecycleTimer=setInterval(()=>{if(!backupBusy){try{lifecycle.purge();audit.prune()}catch{console.error('Underhåll kunde inte slutföras; nytt försök görs automatiskt.')}void maybeBackup()}},60000);lifecycleTimer.unref();
+ const close=async()=>{clearTimeout(startupBackup);clearInterval(lifecycleTimer);closing=true;if(backupTask)await backupTask.catch(()=>{});await new Promise(r=>server.close(r));await Promise.all([...workers.values()].map(w=>new Promise(r=>{if(w.child.exitCode!==null)return r();w.child.once('exit',r);w.child.kill()})));registry.close()};
  return {server,close,maintenance:()=>lifecycle.purge()};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){

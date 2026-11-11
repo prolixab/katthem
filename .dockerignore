@@ -44,3 +44,6 @@
 !schedule-data.mjs
 
 !booking-settings.mjs
+
+!backups.mjs
+!audit.mjs

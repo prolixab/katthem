@@ -339,3 +339,25 @@ Nya volontärer får boka upp till tre introduktionspass själva efter aktuell r
 När hela checklistan är klar visas en gemensam notis med personens namn på startsidan och i Administration för alla admins i det aktuella katthemmet. Volontären ser sin status och återstående kvot på startsidan. Notiserna försvinner vid slutligt godkännande, som kan ges före tredje passet. Inga extra e-postmeddelanden skickas. Admin bekräftar fortsatt praktisk introduktion och godkännande. Godkännande kräver full checklista och aktuella rutiner.
 
 Kvoten kontrolleras i bokningstransaktionen; återkommande bokningar godkänns bara om hela serien ryms. Admin kan boka ytterligare handledda pass åt en aktiv volontär. Befintliga fullt godkända volontärer behåller behörigheten. Minimibemanning och bokningsrekommendation ändras inte. Introduktionspassen ska genomföras med en erfaren volontär; portalen kontrollerar inte automatisk handledarnärvaro. Detta avsnitt ersätter äldre beskrivningar av spärrad självständig bokning före introduktion.
+
+## Version 0.6.017 – byt namn på katthem
+
+Superadmin kan byta namn under Administration → Hantera katthem och åtkomst → Öppna katthem och åtkomst → Byt namn på katthem. Ändra namnet och välj Spara namn. Namnet ska innehålla 1–100 tecken och får inte redan användas av ett annat katthem.
+
+Katthemmets interna identifierare och databas är oförändrade. Konton, bokningar, adress, dörrkod och åtkomst behålls. Namnet hämtas från det beständiga katthemsregistret vid inloggning och i portalen. Även profilvisning och nya profilsparningar använder aktuellt namn utan omstart. Samtidiga namnändringar skyddas mot överskrivning. Uppdatera sidan på andra redan öppna enheter för att se nytt namn direkt.
+
+## Version 0.6.018 – bokningshjälp, säkerhetskopior och ändringshistorik
+
+Schemat visar orsaken till bokningsstopp och leder till rutinbekräftelse, checklistan, kontaktpersonerna eller Mitt konto. Om servern stoppar en bokning efter att läget ändrats visas hjälpen i bokningsdialogen.
+
+Administration → Ändringshistorik visar tidpunkt och ansvarig administratör för viktiga ändringar i det valda katthemmet. De senaste 100 händelserna visas, med 90 dagars lagring. Introduktionsgodkännande, bokningsrekommendation, passändringar, inställda pass, rutinpublicering och katthemsnamn registreras. Bara lyckade åtgärder loggas. Inga lösenord eller fritextanteckningar skrivs till historiken. Namn hämtas från aktuellt konto, så raderade personers namn återinförs inte från loggen.
+
+### Säkerhetskopiering
+
+Portalen skapar dagliga säkerhetskopior efter start och vid underhållskontrollen. Standardmappen är DATA_DIR/backups och de sju senaste kopiorna behålls. BACKUP_ENABLED=0 stänger av automatiken; BACKUP_DIR kan ange en annan skyddad lagringsplats. I Docker behövs en separat beständig montering om BACKUP_DIR pekar utanför /app/data. Kopior på samma server skyddar inte mot förlust av servern; kopiera därför också till separat skyddad lagring.
+
+Före kopieringen spärras nya vanliga portalanrop kortvarigt och pågående anrop får avslutas. Flyttar mellan katthem och andra portalanrop kan inte ändra registret mitt i kopieringen. SQLite kopieras med VACUUM INTO, inte vanlig filkopiering av öppna databaser. Alla katthemsdatabaser, registret, e-postinställningar och nyckelfiler ingår. Kopior och nycklar innehåller känsliga uppgifter; mappar skapas med 0700 och filer med 0600 där filsystemet stöder det.
+
+Varje kopia har kontrollsummor och återläses i en isolerad tillfällig mapp. SQLite integrity_check och foreign_key_check körs och det kontrolleras att alla registrerade katthem har en databas. Denna kontroll prövar filernas återläsbarhet och databasstruktur; den startar inte appen eller skickar påminnelser från kopian. Superadmin ser status och kan skapa eller verifiera kopior via Administration → Säkerhetskopiering. Den äldre rådet att stoppa appen före egen filkopiering gäller fortfarande.
+
+Manuell kontroll: npm run verify-backup -- /sökväg/till/kopia. Återläsning till en ny tom mapp: npm run restore-backup -- /sökväg/till/kopia /ny/tom/datamapp. Kommandot vägrar skriva över en icke-tom mapp. Stoppa driftappen innan den byts till återställd data. För en fullständig driftövning startas en separat isolerad instans med utskick avstängda; det görs inte automatiskt av kontrollkommandot.

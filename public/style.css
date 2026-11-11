@@ -67,3 +67,5 @@ dialog{background:var(--surface,#fff)}.slot.booked{background:color-mix(in srgb,
 @media(max-width:420px){.week-grid.show-week{grid-template-columns:minmax(0,1fr)}}
 
 .brand-home{display:block;border:0;padding:0;background:transparent;text-align:left;width:100%;max-width:100%}.brand-home:hover{filter:none}.brand-home:focus-visible{outline:2px solid var(--green)}#schedule-heading{scroll-margin-top:20px}
+
+.booking-help{margin:16px 0 24px}.booking-help h2{font-size:18px;margin:0 0 8px}.booking-help p{font-size:14px}
