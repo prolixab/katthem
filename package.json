@@ -1,7 +1,7 @@
 {
   "name": "katthem-bokning",
   "private": true,
-  "version": "0.6.18",
+  "version": "0.6.19",
   "scripts": {
     "start": "node portal.mjs",
     "test": "node --test test.mjs features.test.mjs portal.test.mjs engagement.test.mjs settings.test.mjs schedule.test.mjs operations.test.mjs",
@@ -14,5 +14,5 @@
   "dependencies": {
     "nodemailer": "10.2.1"
   },
-  "displayVersion": "0.6.018"
+  "displayVersion": "0.6.019"
 }

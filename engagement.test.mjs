@@ -69,3 +69,5 @@ test('Introduktionsmigrering: tidigare historik räknas inte som nya introduktio
   const migrated=createEngagement(db,{now:()=>time});assert.equal(migrated.get(1).intro_started_at,time);assert.equal(migrated.get(1).intro_bookings,1);assert.equal(migrated.get(1).intro_remaining,2);
  }finally{db.close()}
 });
+
+test('Ny rutinversion behöver bekräftas även av redan bokad volontär',()=>{const db=fixture(),e=createEngagement(db);try{db.exec("INSERT INTO slots VALUES(1,'2099-01-01','08:00','12:00','Morgonpass',0);INSERT INTO bookings VALUES(1,1,1)");e.publish({version:0,title:'Nya rutiner',body:'Kontrollera vatten i samtliga rum.'});assert.equal(e.get(1).routine_current,false);assert.equal(e.pending([1]).length,1);e.accept(1,1);assert.equal(e.get(1).routine_current,true);e.publish({version:1,title:'Ändrade rutiner',body:'Läs den nya instruktionen.'});assert.equal(e.get(1).routine_current,false);assert.equal(e.pending([1]).length,1)}finally{db.close()}});

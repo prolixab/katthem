@@ -1,9 +1,18 @@
 import nodemailer from 'nodemailer';
 import {randomBytes,createCipheriv,createDecipheriv,createHash} from 'node:crypto';
-import {existsSync,readFileSync,writeFileSync,renameSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync,renameSync,unlinkSync} from 'node:fs';
 import path from 'node:path';
 const invalid=message=>{throw Object.assign(new Error(message),{status:400})};
 const validEmail=value=>typeof value==='string'&&value.length<=254&&/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(value);
+// Keep the old file intact until the replacement succeeds. Windows scanners can
+// briefly lock the destination; retry only transient sharing/permission errors.
+export function writeEmailSettings(file,content,{write=writeFileSync,rename=renameSync,remove=unlinkSync,pause=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms)}={}){
+ const temp=file+'.'+randomBytes(12).toString('hex')+'.tmp';
+ try{
+  write(temp,content,{flag:'wx',mode:0o600});
+  for(let attempt=0;;attempt++)try{rename(temp,file);return}catch(error){if(!['EPERM','EACCES','EBUSY'].includes(error.code)||attempt>=5)throw error;pause(25*(attempt+1))}
+ }finally{try{remove(temp)}catch(error){if(error.code!=='ENOENT')throw error}}
+}
 export function createEmailSettings({dataDir,defaultUrl='',production=false,fallback={},createTransport=options=>nodemailer.createTransport(options),fetchImpl=fetch}){
  const file=path.join(dataDir,'email-settings.json'),keyFile=path.join(dataDir,'email-secret.key');
  let saved=existsSync(file)?JSON.parse(readFileSync(file,'utf8')):null;
@@ -25,7 +34,7 @@ export function createEmailSettings({dataDir,defaultUrl='',production=false,fall
   const csvInterval=p.csv_interval===undefined?(saved?.csv_interval||'weekly'):p.csv_interval;if(!['daily','weekly','monthly'].includes(csvInterval))invalid('Välj dagligen, varje vecka eller varje månad för CSV.');
   const csvEnabled=p.csv_enabled===undefined?Boolean(saved?.csv_enabled):p.csv_enabled;if(typeof csvEnabled!=='boolean')invalid('Välj om automatiska CSV-utskick ska aktiveras.');if(csvEnabled&&!p.enabled)invalid('Aktivera Gmail för att skicka automatiska CSV-exporter.');
   const next={csv_enabled:csvEnabled,csv_interval:csvInterval,gmail_address:address,app_url:url.origin,enabled:p.enabled,secret};
-  writeFileSync(file+'.tmp',JSON.stringify(next),{mode:0o600});renameSync(file+'.tmp',file);saved=next;return settings();
+  writeEmailSettings(file,JSON.stringify(next));saved=next;return settings();
  }
  async function gmailSend(message){
   if(!saved?.secret)invalid('Spara Gmail-adress och applösenord innan du testar.');

@@ -45,9 +45,12 @@ I Coolify ligger samma filer i `/app/data` på den beständiga volymen. Volymen 
 
 Pass använder datorns lokala tid. Använd svensk tidszon på datorn. Inaktivering tar inte bort befintliga bokningar; administratören hanterar dessa i schemat. Inställning av ett pass bevarar passet och bokningarna i historiken men stoppar nya bokningar och påminnelser.
 
-## Nästa version
+## Planerade funktioner – avvaktar
 
-Automatisk Google Sheets-synkning och återkommande personliga bokningar ingår inte ännu. Schemat fylls automatiskt på sex veckor framåt. Befintliga vanliga pass och extra händelser kan ändras, och lösenordsåterställning finns på inloggningssidan. För gemensam drift används Coolify-konfigurationen ovan med HTTPS och säkerhetskopiering.
+- **Tvåfaktorsverifiering med Microsoft Authenticator:** planerad förstärkning för admin och superadmin. Införande och aktivering avvaktas. Personliga tidsbaserade engångskoder har diskuterats som den enklare vägen. Pushgodkännande med nummermatchning är ett separat alternativ som behöver utredas tillsammans med Microsofts inloggningsplattform. Metod och införandedatum är inte beslutade. Återställning vid förlorad telefon och säker hantering av nycklar behöver ingå när funktionen utvecklas. Inget tvåfaktorskrav eller någon Microsoft-koppling är aktiverad genom denna planering.
+- **Automatisk Google Sheets-synkning:** finns inte i den nuvarande basmodulen.
+
+Återkommande personliga bokningar är redan införda. Schemat fylls automatiskt på sex veckor framåt. Befintliga vanliga pass och extra händelser kan ändras, och lösenordsåterställning finns på inloggningssidan.
 
 ## Verifiering
 
@@ -278,7 +281,7 @@ Engagemang är separat från inloggningsspärr. Aktiv, pausad, inaktiv och avslu
 
 Efter uttryckligt avslut planeras gallring tre kalendermånader senare (månadsslut klampas). Adminvarning visas efter två månader plus fjorton dagar. Ett dokumenterat annat ändamål med framtida prövningsdatum kan pausa gallringen; administrativa uppdrag måste hanteras separat innan kontot gallras. Gallringsjobbet körs varje minut i portalprocessen och tar ikapp när servern är igång. Det raderar kontaktprofil, identifierbara bokningar, checklistor, sessions-/återställningsuppgifter, privata kalenderlänkar och relaterade personliga markeringar. Anonyma per-pass bemanningstal behålls. Ett kvarvarande konto som behövs i ett annat hem behåller sin gemensamma inloggning, men profilen i det avslutade hemmet återbildas inte. Efter sista gallrade engagemanget anonymiseras även inloggningsankaret och centrala kontaktkopior tas bort. En icke inloggningsbar anonym användarrad hindrar att gamla id återanvänds. Återkomst efter gallring skapar en ny profil med ny introduktion; återkomst före gallring nollställer också introduktionen.
 
-Praktisk information innehåller versionshanterade lokala rutiner med bekräftad version och tidpunkt. Nya volontärer behöver checklista, praktisk introduktion, aktuell rutinbekräftelse och administrativt godkännande för självständig bokning. Admin kan boka handledda introduktionspass åt aktiva volontärer. Befintliga konton behåller introduktionsbehörighet vid migrationen; nypublicerade rutiner behöver ändå bekräftas. Grönmarkering är ett separat erfarenhetsmått. Flytt nollställer lokal introduktion, och återflytt till en redan gallrad profil återanvänder inte den gallrade posten.
+Praktisk information innehåller versionshanterade lokala rutiner med bekräftad version och tidpunkt. Nya volontärer behöver checklista, praktisk introduktion, aktuell rutinbekräftelse och administrativt godkännande för självständig bokning. Admin kan boka introduktionspass med en rutinerad volontär att fråga åt aktiva volontärer. Befintliga konton behåller introduktionsbehörighet vid migrationen; nypublicerade rutiner behöver ändå bekräftas. Grönmarkering är ett separat erfarenhetsmått. Flytt nollställer lokal introduktion, och återflytt till en redan gallrad profil återanvänder inte den gallrade posten.
 
 CSV-underlaget kompletteras med engagemang, rutinversioner och anonyma bemanningstal där dessa tabeller finns. Det är fortfarande en manuell återuppbyggnadsgrund, inte en automatisk databasåterställning. Externa CSV-filer och äldre säkerhetskopior gallras inte av serverjobbet. Fristen är föreningens valda policy; rättighetsbegäranden och övriga GDPR-frågor kräver egna rutiner. Supabase införs inte i denna ändring.
 
@@ -338,7 +341,7 @@ Nya volontärer får boka upp till tre introduktionspass själva efter aktuell r
 
 När hela checklistan är klar visas en gemensam notis med personens namn på startsidan och i Administration för alla admins i det aktuella katthemmet. Volontären ser sin status och återstående kvot på startsidan. Notiserna försvinner vid slutligt godkännande, som kan ges före tredje passet. Inga extra e-postmeddelanden skickas. Admin bekräftar fortsatt praktisk introduktion och godkännande. Godkännande kräver full checklista och aktuella rutiner.
 
-Kvoten kontrolleras i bokningstransaktionen; återkommande bokningar godkänns bara om hela serien ryms. Admin kan boka ytterligare handledda pass åt en aktiv volontär. Befintliga fullt godkända volontärer behåller behörigheten. Minimibemanning och bokningsrekommendation ändras inte. Introduktionspassen ska genomföras med en erfaren volontär; portalen kontrollerar inte automatisk handledarnärvaro. Detta avsnitt ersätter äldre beskrivningar av spärrad självständig bokning före introduktion.
+Kvoten kontrolleras i bokningstransaktionen; återkommande bokningar godkänns bara om hela serien ryms. Admin kan boka ytterligare pass med en rutinerad volontär att fråga åt en aktiv volontär. Befintliga fullt godkända volontärer behåller behörigheten. Minimibemanning och bokningsrekommendation ändras inte. Introduktionspassen ska genomföras med en erfaren volontär; föreningen har inga särskilda handledare. Detta avsnitt ersätter äldre beskrivningar av spärrad självständig bokning före introduktion.
 
 ## Version 0.6.017 – byt namn på katthem
 
@@ -361,3 +364,22 @@ Före kopieringen spärras nya vanliga portalanrop kortvarigt och pågående anr
 Varje kopia har kontrollsummor och återläses i en isolerad tillfällig mapp. SQLite integrity_check och foreign_key_check körs och det kontrolleras att alla registrerade katthem har en databas. Denna kontroll prövar filernas återläsbarhet och databasstruktur; den startar inte appen eller skickar påminnelser från kopian. Superadmin ser status och kan skapa eller verifiera kopior via Administration → Säkerhetskopiering. Den äldre rådet att stoppa appen före egen filkopiering gäller fortfarande.
 
 Manuell kontroll: npm run verify-backup -- /sökväg/till/kopia. Återläsning till en ny tom mapp: npm run restore-backup -- /sökväg/till/kopia /ny/tom/datamapp. Kommandot vägrar skriva över en icke-tom mapp. Stoppa driftappen innan den byts till återställd data. För en fullständig driftövning startas en separat isolerad instans med utskick avstängda; det görs inte automatiskt av kontrollkommandot.
+
+## Version 0.6.019 – prioriterad och rollanpassad navigation
+
+Menyn visar Veckoschema först, därefter Bemanning för admin/superadmin, sedan Mina bokningar, Praktisk information och Volontärer. Administration visas bara för administrativa roller. Anslagstavla och Mitt konto ligger efter arbetsfunktionerna. Endast tillgängliga funktioner visas; serverns behörigheter ändras inte.
+
+Administration är grupperad i Planering och säkerhet, Uppföljning och kontakt, Information och planeringsstöd, Import och export samt Utseende och trivsel. Introduktioner som väntar på godkännande och passplanering ligger tidigt. Katthemsåtkomst och säkerhetskopiering visas i den första gruppen för global superadmin. Gruppernas befintliga fällbara delar och öppningsbeteende behålls. Kontakter och rutiner har genvägar; all befintlig hantering av pass, engagemang, e-post, nyheter, CSV och historik finns kvar.
+
+Praktisk information visar adress, introduktion, aktuella rutiner, kontaktpersoner och checklista före allmän träffinformation. På Mitt konto ligger engagemang och lösenordsbyte före profilredigering och passstatistik. Manualens befintliga rollfilter används även efter prioritetssortering, och ett inledande avsnitt beskriver navigationen. Administrativa funktioner presenteras inte som låsta alternativ för volontärer.
+
+Standardnamnet vid logotypen är Volontärsportalen, även på inloggningssidan. Vald föreningslogotyp behålls och katthemmets namn visas fortsatt i katthemsväljaren.
+
+### Mina bokningar och aktuella rutiner (0.6.019)
+Mina bokningar samlar egna kommande bokningar från alla katthem som kontot har åtkomst till. En gemensam ICS-fil innehåller alla icke inställda kommande pass med respektive hems adress och separata händelse-ID:n. Veckokalendern och kalenderprenumerationen är fortsatt per valt katthem. Identiteter kopplas med portalens befintliga kontolänkar, aldrig enbart e-post.
+
+Nya rutiner behöver läsas och bekräftas även inför redan bokade pass. En påminnelse ligger kvar tills aktuell version bekräftats; bokningarna avbokas inte. Gröna volontärer är rutinerade personer att fråga, inte formellt utsedda handledare. Volontärer behöver minst 10 genomförda pass och fullständig checklista för att bli gröna; import och manuell markering kringgår inte kravet. Admin och superadmin behåller grön rollmarkering.
+
+Introduktionschecklistan innehåller även `profile-updated`: volontären öppnar Mitt konto, kontrollerar och uppdaterar sina profil- och kontaktuppgifter och bekräftar sedan punkten själv. Inga kontaktfält blir obligatoriska genom detta. Punkten ingår i den befintliga serverkontrollen av hela checklistan och undantas inte för importerade eller manuellt markerade volontärer. Tidigare genomförda checklistor behöver kompletteras med den nya punkten innan volontären kan vara grön igen.
+
+Databasskrivningar i katthemmens server väntar upp till fem sekunder på ett tillfälligt SQLite-lås i stället för att omedelbart avbrytas. Bokningskvoten kontrolleras fortfarande i transaktionen. E-postinställningar ersätts atomiskt med unik temporär fil och begränsade återförsök vid tillfälliga Windows-lås; befintlig fil behålls vid misslyckat sparande.

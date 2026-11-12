@@ -18,6 +18,7 @@ export const checklistGroups=[
   {id:'report-concerns',text:'Jag vet vem jag kontaktar om en katt verkar sjuk eller beter sig annorlunda.'}
  ]},
  {title:'Använda volontärportalen',items:[
+  {id:'profile-updated',text:'Jag har öppnat Mitt konto och kontrollerat och uppdaterat mina profil- och kontaktuppgifter.'},
   {id:'booking',text:'Jag kan boka och avboka ett pass.'},
   {id:'staffing-colors',text:'Jag förstår bemanningsmarkeringarna och den röda färgen.'},
   {id:'late-cancellation',text:'Jag vet hur jag meddelar sena förhinder.'}
