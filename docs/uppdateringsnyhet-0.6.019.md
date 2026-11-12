@@ -13,3 +13,5 @@ Mina bokningar samlar nu pass från alla dina katthem, med en gemensam kalenderf
 Checklistan har en ny punkt: kontrollera och uppdatera din profil under Mitt konto. Punkten krävs också för tidigare klara checklistor och manuellt grönmarkerade volontärer.
 
 Förbättrad stabilitet vid samtidiga bokningar och när e-postinställningar sparas på Windows.
+
+Vid logotypen visas nu valt katthems namn när du är inloggad. Inloggningssidan behåller namnet Volontärsportalen.

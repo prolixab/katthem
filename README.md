@@ -383,3 +383,6 @@ Nya rutiner behöver läsas och bekräftas även inför redan bokade pass. En p�
 Introduktionschecklistan innehåller även `profile-updated`: volontären öppnar Mitt konto, kontrollerar och uppdaterar sina profil- och kontaktuppgifter och bekräftar sedan punkten själv. Inga kontaktfält blir obligatoriska genom detta. Punkten ingår i den befintliga serverkontrollen av hela checklistan och undantas inte för importerade eller manuellt markerade volontärer. Tidigare genomförda checklistor behöver kompletteras med den nya punkten innan volontären kan vara grön igen.
 
 Databasskrivningar i katthemmens server väntar upp till fem sekunder på ett tillfälligt SQLite-lås i stället för att omedelbart avbrytas. Bokningskvoten kontrolleras fortfarande i transaktionen. E-postinställningar ersätts atomiskt med unik temporär fil och begränsade återförsök vid tillfälliga Windows-lås; befintlig fil behålls vid misslyckat sparande.
+
+### Katthemmets namn i inloggat läge (0.6.019)
+Vid logotypen visas valt katthems namn när användaren är inloggad. Huskvarna / Jönköping förkortas till Huskvarna i denna rubrik. Namnet uppdateras vid byte av katthem och visas även med standardlogotypen. Inloggningssidan behåller Volontärsportalen.
