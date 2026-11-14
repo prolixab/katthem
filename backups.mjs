@@ -1,4 +1,7 @@
 import fs from 'node:fs';
+import {presenceModule} from './presence.mjs';
+import yazl from 'yazl';
+import {pipeline} from 'node:stream/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash,randomBytes} from 'node:crypto';
@@ -6,6 +9,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath} from 'node:url';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const safePath=(root,name)=>{if(typeof name!=='string'||!name||name.includes('\\')||path.isAbsolute(name)||name.split('/').some(p=>!p||p==='.'||p==='..'))throw Error('Ogiltig sökväg i säkerhetskopian.');const p=path.resolve(root,name);if(!p.startsWith(path.resolve(root)+path.sep))throw Error('Ogiltig sökväg.');return p};
+function removeTransientData(file){const db=new DatabaseSync(file);try{let removed=false;for(const table of presenceModule.transientTables)if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)){db.exec('DELETE FROM '+table);removed=true}if(removed)db.exec('VACUUM')}finally{db.close()}}
 function copyChecked(source,destination){if(fs.lstatSync(source).isSymbolicLink())throw Error('Symboliska länkar stöds inte i säkerhetskopior.');fs.mkdirSync(path.dirname(destination),{recursive:true,mode:0o700});fs.copyFileSync(source,destination);fs.chmodSync(destination,0o600)}
 export function verifyBackup(folder){
  const manifest=JSON.parse(fs.readFileSync(path.join(folder,'manifest.json'),'utf8'));
@@ -35,7 +39,7 @@ export function createBackups({dataDir,backupDir=path.join(dataDir,'backups'),no
   fs.mkdirSync(temporary,{mode:0o700});
   try{
    const walk=directory=>{for(const entry of fs.readdirSync(directory,{withFileTypes:true})){const source=path.join(directory,entry.name);if(source===backupDir)continue;if(entry.isSymbolicLink())throw Error('Symboliska länkar stöds inte i datamappen.');if(entry.isDirectory()){walk(source);continue}if(!entry.isFile()||/-(wal|shm|journal)$/.test(entry.name))continue;const relative=path.relative(dataDir,source).split(path.sep).join('/'),target=safePath(temporary,relative);fs.mkdirSync(path.dirname(target),{recursive:true,mode:0o700});
-    if(entry.name.endsWith('.sqlite')){const db=new DatabaseSync(source,{readOnly:true});try{db.exec('PRAGMA busy_timeout=5000');db.prepare('VACUUM INTO ?').run(target)}finally{db.close()}fs.chmodSync(target,0o600)}else copyChecked(source,target);
+    if(entry.name.endsWith('.sqlite')){const db=new DatabaseSync(source,{readOnly:true});try{db.exec('PRAGMA busy_timeout=5000');db.prepare('VACUUM INTO ?').run(target)}finally{db.close()}removeTransientData(target);fs.chmodSync(target,0o600)}else copyChecked(source,target);
     files.push({path:relative,sha256:hash(target)});
    }};walk(dataDir);
    const manifest={format:1,created_at,verified_at:null,files};fs.writeFileSync(path.join(temporary,'manifest.json'),JSON.stringify(manifest),{mode:0o600});verifyBackup(temporary);manifest.verified_at=now();fs.writeFileSync(path.join(temporary,'manifest.json'),JSON.stringify(manifest),{mode:0o600});fs.renameSync(temporary,destination);
@@ -43,8 +47,25 @@ export function createBackups({dataDir,backupDir=path.join(dataDir,'backups'),no
   }catch(error){fs.rmSync(temporary,{recursive:true,force:true});state={...state,last_error:'Säkerhetskopiering eller återläsningskontroll misslyckades. Försök igen och kontrollera serverns lagring.'};save();throw error}
  }
  function verify(id){if(!entries().some(e=>e.id===id))throw Object.assign(Error('Säkerhetskopian finns inte.'),{status:404});try{const result=verifyBackup(path.join(backupDir,id)),file=path.join(backupDir,id,'manifest.json'),m=JSON.parse(fs.readFileSync(file,'utf8'));m.verified_at=now();fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});state.last_error=null;save();return result}catch(error){state.last_error='Säkerhetskopian klarade inte återläsningskontrollen.';save();throw error}}
+ let downloadBusy=false;
+ async function download(id){
+  if(downloadBusy)throw Object.assign(Error('En säkerhetskopia förbereds redan för nedladdning. Försök igen om en stund.'),{status:409});
+  if(!entries().some(e=>e.id===id))throw Object.assign(Error('Säkerhetskopian finns inte.'),{status:404});
+  downloadBusy=true;let temporary;
+  try{
+   temporary=fs.mkdtempSync(path.join(tmpdir(),'katthem-backup-download-'));const staged=path.join(temporary,'files');
+   fs.mkdirSync(staged,{mode:0o700});const source=path.join(backupDir,id),manifest=JSON.parse(fs.readFileSync(path.join(source,'manifest.json'),'utf8'));
+   // Freeze the chosen snapshot before asynchronous ZIP creation, so retention cannot remove it mid-download.
+   copyChecked(path.join(source,'manifest.json'),path.join(staged,'manifest.json'));
+   for(const entry of manifest.files)copyChecked(safePath(source,entry.path),safePath(staged,entry.path));verifyBackup(staged);
+   const archive=path.join(temporary,'archive.zip'),zip=new yazl.ZipFile();zip.on('error',error=>zip.outputStream.destroy(error));
+   for(const name of ['manifest.json',...manifest.files.map(e=>e.path)])zip.addFile(safePath(staged,name),name,{mode:0o100600});
+   const complete=pipeline(zip.outputStream,fs.createWriteStream(archive,{mode:0o600}));zip.end();await complete;
+   return {path:archive,filename:'katthem-'+id+'.zip',cleanup:()=>fs.rmSync(temporary,{recursive:true,force:true})};
+  }catch(error){if(temporary)fs.rmSync(temporary,{recursive:true,force:true});throw error}finally{downloadBusy=false}
+ }
  const failed=()=>{state.last_error='Säkerhetskopieringen kunde inte slutföras. Försök igen och kontrollera serverns lagring.';save()};
- return {create,verify,status,failed,due:()=>!state.last_success||now()-state.last_success>=86400000};
+ return {create,verify,status,failed,download,due:()=>!state.last_success||now()-state.last_success>=86400000};
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{const [command,source,destination]=process.argv.slice(2);if(command==='verify'&&source)console.log(JSON.stringify(verifyBackup(source)));else if(command==='restore'&&source&&destination)console.log(JSON.stringify(restoreBackup(source,destination)));else throw Error('Använd: node backups.mjs verify KOPIA eller restore KOPIA TOM_MAPP')}catch(error){console.error(error.message);process.exitCode=1}

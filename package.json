@@ -1,10 +1,10 @@
 {
   "name": "katthem-bokning",
   "private": true,
-  "version": "0.6.18",
+  "version": "0.6.27",
   "scripts": {
     "start": "node portal.mjs",
-    "test": "node --test test.mjs features.test.mjs portal.test.mjs engagement.test.mjs settings.test.mjs schedule.test.mjs operations.test.mjs",
+    "test": "node --test test.mjs features.test.mjs portal.test.mjs engagement.test.mjs settings.test.mjs schedule.test.mjs operations.test.mjs presence.test.mjs display.test.mjs checklist.test.mjs",
     "verify-backup": "node backups.mjs verify",
     "restore-backup": "node backups.mjs restore"
   },
@@ -12,7 +12,12 @@
     "node": ">=24"
   },
   "dependencies": {
-    "nodemailer": "10.2.1"
+    "nodemailer": "10.2.1",
+    "qrcode": "1.5.4",
+    "yazl": "3.3.1"
   },
-  "displayVersion": "0.6.018"
+  "displayVersion": "0.6.027",
+  "devDependencies": {
+    "yauzl": "3.4.0"
+  }
 }

@@ -47,3 +47,7 @@
 
 !backups.mjs
 !audit.mjs
+
+!presence.mjs
+
+!display.mjs

@@ -23,7 +23,7 @@ function harness(){
  const calls=[],focus=[],scroll=[],node={id:'refresh-schedule',tagName:'BUTTON'},controls={'#refresh-schedule':{focus:options=>focus.push(options)}},fresh={schedule_range:{start:'2030-01-01',end:'2030-01-07'},slots:[],bookings:[],user:{id:1}};
  let complete;
  const context=vm.createContext({state:{user:{id:1},portal:{selected:'a'},slots:[],bookings:[]},view:'schedule',offset:0,filter:'all',mutationVersion:0,checklistSaving:new Set(),modal:{open:false},document:{activeElement:node,visibilityState:'visible'},app:{contains:()=>true,querySelector:s=>controls[s]},CSS:{escape:s=>s},$:s=>controls[s],window:{scrollY:120,scrollTo:(...args)=>scroll.push(args)},week:()=>['2030-01-01','2030-01-07'],api:async url=>{calls.push(url);return await new Promise(resolve=>{complete=()=>resolve(fresh)})},render:()=>calls.push('render'),toast:()=>{}});
- vm.runInContext(scheduleSource+'\n'+appSource.slice(appSource.indexOf('let refreshing=false;'),appSource.indexOf('setInterval(()=>refreshSchedule()')),context);
+ vm.runInContext(scheduleSource+'\n'+appSource.slice(appSource.indexOf('let refreshing=false;'),appSource.indexOf('setInterval(()=>{void refreshSchedule()')),context);
  return {context,calls,focus,scroll,complete:()=>complete(),fresh};
 }
 test('Bakgrundsuppdatering: bevarar fokus och rullning efter nytt schemasvar',async()=>{

@@ -361,3 +361,90 @@ Före kopieringen spärras nya vanliga portalanrop kortvarigt och pågående anr
 Varje kopia har kontrollsummor och återläses i en isolerad tillfällig mapp. SQLite integrity_check och foreign_key_check körs och det kontrolleras att alla registrerade katthem har en databas. Denna kontroll prövar filernas återläsbarhet och databasstruktur; den startar inte appen eller skickar påminnelser från kopian. Superadmin ser status och kan skapa eller verifiera kopior via Administration → Säkerhetskopiering. Den äldre rådet att stoppa appen före egen filkopiering gäller fortfarande.
 
 Manuell kontroll: npm run verify-backup -- /sökväg/till/kopia. Återläsning till en ny tom mapp: npm run restore-backup -- /sökväg/till/kopia /ny/tom/datamapp. Kommandot vägrar skriva över en icke-tom mapp. Stoppa driftappen innan den byts till återställd data. För en fullständig driftövning startas en separat isolerad instans med utskick avstängda; det görs inte automatiskt av kontrollkommandot.
+
+## Version 0.6.019 – ladda ner säkerhetskopior och händelser på Anslagstavlan
+
+Systemets superadmin kan välja Ladda ner ZIP vid en kopia under Administration → Säkerhetskopiering efter Hämta status. Hela kopian ingår: manifest.json, databaser, inställningar och nyckelfiler. Den valda kopian fryses till en skyddad tillfällig mapp och verifieras före ZIP-skapandet. Arkivet strömmas som en inloggningsskyddad nedladdning utan webbläsarcache; tillfälliga filer städas även om överföringen avbryts. Administratörer och volontärer får inte ladda ner systemets säkerhetskopior.
+
+Packa upp ZIP-filen före npm run verify-backup eller restore-backup. Förvara den skyddat på separat lagring; den innehåller känsliga kontouppgifter och nycklar. ZIP-filen är inte lösenordskrypterad. Nedladdningen registreras i ändringshistoriken. Ett versionslåst ZIP-bibliotek används för strömmande komprimering; testerna läser filen med ett separat ZIP-bibliotek.
+
+Händelseöversikten har flyttats från Administration till Anslagstavla och visar kommande händelser och öppet hus. Volontärer kan öppna information och boka. Admin skapar händelser och kan visa deltagare, ändra tider eller ställa in via översikten. Kalendern finns kvar och hanterar samma pass. Återkommande ordinarie extra pass skapas fortsatt under Administration → Skapa och planera. Äldre avsnitt om Händelser under Administration avser tidigare versioner.
+
+## Version 0.6.020 – förberedd tillvalsmodul för närvarobekräftelse
+
+Närvarobekräftelse är en separat modul i presence.mjs och public/presence.js, avstängd från början i varje katthem. Systemets superadmin kan senare aktivera den under Administration → Moduler – närvarobekräftelse. När modulen är avstängd visas ingen volontärmeny, inga bekräftelser kan lämnas och QR-funktionen är spärrad på servern. Alla vanliga bokningar fungerar oberoende av modulen.
+
+Modulen visar enbart dagens positiva bekräftelser från frivilliga. En egen bokning för idag kan kopplas till en bekräftelse, eller personen kan ange en spontan insats utan att skapa någon bokning. Inga ankomstklockslag, sluttider, arbetstimmar, positioner, frånvarorader eller individuella historikvyer lagras. Saknad bekräftelse räknas inte som frånvaro. Bekräftelser påverkar inte genomförda pass, grönmarkering, introduktion eller bokningsrätt. Dagens namn visas för inloggade i samma katthem; detta framgår innan personen bekräftar.
+
+Bekräftelser rensas vid dagsbyte (svensk tid) och avstängning. Egna felaktiga bekräftelser kan ångras. Inaktiverade eller avslutade engagemang rensas automatiskt från modulen. Bekräftelser stryks ur databasernas säkerhetskopior före kontrollsummor och arkivering, så funktionen skapar ingen närvarohistorik genom backuper. Modulinställningen ingår i säkerhetskopian. Endast aktivering och avstängning loggas i administratörshistoriken, aldrig personers bekräftelser.
+
+Aktiverad modul kan generera en QR-skylt. Koden innehåller bara en länk till rätt katthem och kräver inloggning och uttrycklig bekräftelse. Ingen person identifieras genom själva koden och fysisk plats kontrolleras inte. Publicerad portaladress ska användas vid utskrift. Tekniskt kontrakt och utbyggnadspunkter finns i docs/narvaromodul.md.
+
+## Version 0.6.021 – korrekt e-post för tilldelade volontärprofiler
+
+När ett ordinarie konto får åtkomst till ett annat katthem och e-postadressen redan används lokalt skapas ett separat skuggkonto med en intern reservadress. Profil-, konto- och deltagarsvar visar nu den verkliga e-postadressen från källkontot. Kontona slås inte ihop och behörigheter, bokningar och lokala profiluppgifter behålls.
+
+En oförändrad synlig e-postadress översätts tillbaka till den interna adressen när en lokal profil sparas. Ett försök att ändra denna inloggningsadress i målkatthemmet avvisas med hänvisning till det ordinarie katthemmet. Databasen behöver ingen manuell ändring för befintliga reservadresser. Rättningen gäller portalens JSON-visning; interna export- och utskicksvägar har inte ändrats i denna version.
+
+## Version 0.6.022 – separat visningsskärm för schemat
+
+Administration → Visningsskärm för schemat → Hantera visningslänk skapar en läslänk för valt katthem. En admin i samma katthem kan rotera eller återkalla den. Inga vanliga konton eller administratörssessioner behövs på skärmen. Använd en separat webbläsarprofil utan portalinloggning och spara hela länken som bokmärke. Visningen på /visning använder separata filer och visar sju dagar totalt: idag och sex dagar framåt. Veckonummer och en tydlig avdelare markerar övergången till en ny vecka, även vid årsskifte. Helskärmsknappen aktiveras lokalt på skärmen.
+
+Namngivning är avstängd från början: passnamn, tider, inställda pass och antal bokade visas. Admin kan uttryckligen välja deltagarnamn. E-post, telefon, dörrkod, profiluppgifter, extra information och interna anteckningar lämnar aldrig denna vy. Namn från inställda pass visas inte. Ingen närvaroregistrering eller uppgift om arbetad tid ingår.
+
+Nyckeln är slumpad (256 bitar), sparas som SHA-256-hash i registret och är bunden till ett katthem. Länken bär nyckeln i fragmentet, som inte skickas i URL till servern. Klienten skickar den i X-Display-Key enbart till GET /api/display med credentials:omit. Nyckeln ger ingen normal session, ingen åtkomst till övriga API:er och inga skrivrättigheter. POST /api/portal/display skapar en ny nyckel med show_names och revisionsnummer; DELETE återkallar med revisionsnummer. GET där visar bara status, aldrig nyckeln. Rotation och återkallande loggas utan nyckelvärde.
+
+Sidan använder no-store, no-referrer, noindex och en separat CSP. Länken är en åtkomstnyckel: den fungerar även utanför lokalen om den delas. Ingen platskontroll ingår. Schemat hämtas var 30:e sekund, med tolv sekunders timeout. Återkallad länk tömmer bilden vid nästa hämtning. Nätverksfel visar tydlig varning och senast hämtade schema i högst cirka två minuter före tömning, därefter fortsatta återförsök. API:et tillåter inga egna datumintervall och lämnar inga interna id:n. Tabellerna i display.mjs separerar visningsbehörighet från vanlig inloggning.
+
+### Frivillig närvarobekräftelse från visningsskärmen
+
+När närvaromodulen är aktiverad i det valda katthemmet får skärmen en QR-kod med texten Jag är här och hjälper till. Koden går till den vanliga inloggningen och därefter närvarosidan för just katthemmet. Den innehåller varken visningsnyckel eller personuppgifter. Volontären bekräftar på egen mobil. Skärmens rättigheter är fortsatt begränsade till läsning.
+
+Visningssvaret innehåller endast QR-bild och mobilens länk, aldrig en lista över bekräftelser eller annan närvarodata. Avstängd närvaromodul döljer rutan vid nästa skärmuppdatering. Återkallad visningslänk eller inaktuellt schema döljer också QR-rutan. På närvarosidan gäller fortsatt frivillighet, ingen tidsmätning eller frånvaroregistrering och ingen påverkan på bokningsrätt eller statistik.
+
+### Förnamn på visningsskärmen
+
+När namnvisning är vald skickar visnings-API:et förnamn. Från version 0.6.023 läggs vid behov minsta särskiljande prefix från efternamnet till för lika förnamn. Bindestreck i förnamn bevaras. Personer med samma förnamn visas var för sig och bokningar eller konton slås inte ihop. Namn som består av flera ord behöver därför kontrolleras i profilen om annat tilltalsnamn önskas. QR-bekräftelsen kräver fortsatt personlig inloggning. Från version 0.6.023 kan admin separat tillåta dagens bokade pass på gemensam skärm.
+
+## Version 0.6.023 – dagens bokade volontärer på gemensam skärm
+
+Admin kan under Visningsskärm för schemat välja både namnvisning och Tillåt frivillig bekräftelse för dagens bokade volontärer. Valet skapar en ny länk och ändrar inte rättigheterna på äldre läslänkar. Standardvärdet är avstängt. Närvaromodulen måste också vara aktiverad för katthemmet. Bara då har länken en begränsad skrivmöjlighet för positiva dagsbekräftelser. Vanlig bokning, avbokning, profiländring och administration förblir spärrade.
+
+På dagens datum öppnas Jag är här. Volontären väljer sitt namn och pass samt Bekräfta att jag är här. Bara bokningar på dagens datum, i samma katthem, på ej inställda pass, för aktiva konton med aktivt engagemang, går att välja. Andra dagar har avstängd knapp. Valet innehåller passnamn och tid för personer med flera pass. Spontana insatser går via QR-koden och personlig inloggning. Saknad bekräftelse räknas fortsatt inte som frånvaro. Bekräftelsen påverkar inte passantal, grönmarkering, introduktion eller bokningsrätt.
+
+Namn på schemat och i listan använder förnamn och minsta antal bokstäver från efternamnet som skiljer lika förnamn. Bindestreck bevaras. Identiska namn går inte att välja från skärmen utan hänvisas till QR-inloggningen. Systemet slår inte ihop personer eller bokningar. En gemensam skärm identifierar inte vem som klickar. Länken fungerar även utanför lokalen om någon delar den.
+
+GET /api/display skickar begränsade val utan konto- eller boknings-id:n. Varje val är en HMAC med serverhemlighet, katthem, aktuell visningsnyckel, svenskt datum och bokning. POST /api/display/confirm tar endast choice och visningsnyckeln. Servern kontrollerar aktuella rättigheter, modulstatus, bokning och datum igen. Avbokade eller inställda pass, avstängda konton, gårdagens val och gamla eller återkallade länkar kan inte användas. Den privata worker-rutten blockeras på portalens offentliga gränssnitt. Förfrågningar begränsas till 120 bekräftelseförsök per minut och katthem. Dubbeltryck är idempotenta genom närvaromodulens unika index.
+
+Skärmen visar inte vilka som bekräftat eller saknar bekräftelse. Efter lyckat val visas bara ett kort generellt tack. Bekräftelser lagras utan klockslag i den befintliga dagsmodulen, rensas vid dagsbyte/avstängning och tas bort ur säkerhetskopior. Namnval och bekräftelser hamnar inte i adminloggen. Egna felaktiga bekräftelser kan ångras via personlig inloggning på mobilen. Detta avsnitt utökar beskrivningen av den tidigare helt skrivskyddade visningslänken: läsläget finns kvar som standard.
+
+Kortvariga SQLite-lås mellan portal och katthemsprocess väntas nu ut i upp till fem sekunder även i katthemsprocessen, i stället för att omedelbart ge HTTP 500. Detta skyddar samtidiga schemaläsningar och bokningsförsök när en annan anslutning skriver. Ett integrationstest håller ett skrivlås och verifierar att läsningen lyckas när låset släpps.
+
+## Version 0.6.024 – närvaro per pass och samlad volontärprofil
+
+Jag är här ligger nu på varje pass i skärmschemat. Bara dagens aktiva pass har en fungerande knapp. Dialogen visar det valda passet och bara dess bokade, aktiva volontärer. Andra dagar har avstängd knapp och inställda pass har ingen knapp. Signerade passnycklar kopplar varje dialog till rätt tillfälle utan att exponera interna id:n. Namn som inte går att skilja åt och spontana insatser hänvisas fortsatt till QR-inloggningen. Dialogen bevaras vid oförändrade bakgrundshämtningar och stängs om dess val blir inaktuella.
+
+Den privata volontärprofilen visar Senast på plats: bara datumet för senaste frivilliga bekräftelsen från mobil eller gemensam skärm. Det är en uppgift om bekräftelse, ingen verifiering av fysisk plats eller vem som klickade. Tomt fält betyder ingen sparad uppgift, inte frånvaro. Dagens närvarolista rensas som tidigare. Tabellen presence_last har högst en rad per konto, utan klockslag och tidigare datum. Den skrivs över vid nästa bekräftelse och används aldrig för bokningsrätt, passantal, grönmarkering eller uppföljningsvarningar. Gamla bokningar fyller inte datumet. Endast en kvarvarande faktisk närvarobekräftelse kan fylla uppgiften vid uppgradering.
+
+Vid personlig ångring av dagens sista bekräftelse tas det senaste datumet bort om det gäller idag. Äldre datum går inte att återställa eftersom ingen historik sparas. Avstängd närvaromodul eller gallring rensar datumet. Vid paus behålls senaste datumet. Tabellen stryks ur säkerhetskopior tillsammans med dagens bekräftelser, så en återställning återför ingen närvarohistorik. Datumet finns bara i inloggade egna kontouppgifter och adminskyddade profiler, aldrig i skärmschemat eller namnväljaren.
+
+I volontärslistan återstår endast Visa volontärprofil på personkorten. Lösenord, roll, grönmarkering och aktivering finns inne i profilen, med tidigare behörighetskontroller. Profiler som hanteras genom tilldelad åtkomst behåller sina spärrar för lokal kontoadministration.
+
+Profilens Introduktion genomförd och godkänd följer den befintliga samlade introduktionsstatusen automatiskt. Full checklista räcker inte ensam för nya volontärer: praktisk introduktion och slutligt godkännande krävs fortsatt. Systemets superadmin kan via profilen klicka ur rutan för en volontär som behöver en ny avstämning. Servern sätter intro_review_required och stoppar nya egna bokningar, även om en ursprunglig introduktionskvot återstår. Befintliga bokningar och checklistans kryss behålls och admin kan boka handledda pass. Grönmarkering är fortsatt separat.
+
+PATCH /api/engagements/:id/introduction-status kräver superadmin, ett volontärkonto, completed och aktuellt revisionsnummer. Samtidiga profiländringar skyddas mot överskrivning. Nytt godkännande kräver full checklista, aktuella rutiner och bekräftad praktisk introduktion. Ordinarie administratörsgranskning kan återgodkänna när dessa krav är uppfyllda. Händelsen registreras i adminloggen. En ny lokal introduktion vid återkomst eller flytt har fortsatt sin vanliga separata introduktionskvot.
+
+### Introduktionschecklista (0.6.025)
+Admin och superadmin kan under Praktisk information → Aktuella rutiner → Redigera introduktionschecklista ändra rubriker och texter och lägga till frågor/punkter och avsnitt för sitt katthem. Befintliga punkter har stabila ID:n och sparade kryss behålls; befintliga punkter kan därför inte raderas i redigeraren. Nya punkter börjar okryssade. Vid sparandet väljs om de gäller alla volontärer eller bara nya och pågående introduktioner. Redan praktiskt och slutligt godkända volontärer undantas i det senare fallet. Textändringar visas även för dem. Nya konton och omstartade introduktioner använder senaste checklistan. Samtidiga ändringar skyddas med revisionskontroll. Godkännanden/bokningar återkallas inte av mallredigering; berörda checklistors fullständighet och grönmarkering räknas om.
+
+Att superadmin klickar ur ”Introduktion genomförd och godkänd” rensar **inte** checklistan: kryssen och bokningarna ligger kvar, men en ny avstämning krävs. Checklistans mall, versioner och individuella tilldelning lagras i katthemmets databas och följer med dess säkerhetskopia.
+
+Standardvalet i redigeraren är alltid **nya och pågående introduktioner**, även om föregående ändring gällde alla. Redan godkända volontärer behöver därmed inte komplettera nya punkter om inte admin uttryckligen ändrar målgruppen.
+
+Introduktionsdelen och volontärens checklista döljs när `intro_ready` är sant. Återkallat godkännande visar dem igen med sparade kryss kvar. Fullständig checklista räcker inte för att återställa ett återkallat godkännande; admin/SA behöver godkänna igen. Även introduktionsraden under aktuella rutiner döljs efter godkännande. Rutinbekräftelsen hanteras fortfarande separat.
+
+### Redigerbara städrutiner på passen (0.6.026)
+Admin och superadmin kan välja **Redigera städrutiner** i ett pass, eller **Praktisk information → Aktuella rutiner → Redigera städrutiner på passen**. Ange gemensam daglig text och städning per veckodag. Texterna sparas i katthemmets egen databas (`shift_routines`) med revisionskontroll och visas på alla pass; befintliga texter används vid uppgradering. Varje text får innehålla högst 2000 tecken. Volontärer kan läsa men inte ändra dem. Ändringen loggas i adminloggen och följer med databasbackuper. Bokningar och introduktionsgodkännanden påverkas inte. Detta är separat från versionshanterade Aktuella rutiner och kräver ingen läsbekräftelse; uppdatera instruktionerna på plats separat. Enskilda pass har fortsatt sin egen beskrivning och Extra information.
+
+### Tillfälliga passrutiner (0.6.027)
+I städrutinernas redigerare väljer Admin/SA **Permanent** eller **Tillfällig**. Permanent ändrar ordinarie texter. Tillfällig sparar en separat uppsättning för ett datumintervall, inklusive start- och slutdagen, i katthemmets databas. Passets datum avgör vilka texter som visas, utan tidsstyrda jobb. Berörda pass märks ”Tillfälliga rutiner”. Utanför perioden återgår visningen automatiskt till de ordinarie texterna. Endast en tillfällig period kan finnas åt gången; en ny sparad period ersätter den föregående. Redigeraren visar den sparade perioden och låter admin ändra eller ta bort den. Permanent redigering bevarar en sparad tillfällig period. Bokningar, introduktion och läsbekräftelser påverkas inte. Revisionskontroll skyddar även ändring och borttagning av perioden.
