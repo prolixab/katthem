@@ -472,3 +472,19 @@ Databasskrivningar i katthemmens server väntar upp till fem sekunder på ett ti
 
 ### Katthemmets namn i inloggat läge (0.6.019)
 Vid logotypen visas valt katthems namn när användaren är inloggad. Huskvarna / Jönköping förkortas till Huskvarna i denna rubrik. Namnet uppdateras vid byte av katthem och visas även med standardlogotypen. Inloggningssidan behåller Volontärsportalen.
+
+## Version 0.6.028 – myndig medbokad, navigation och praktisk information
+Volontärer som är under 18 på **passets datum** kan bara bokas om en aktiv person med aktivt engagemang och registrerat födelsedatum, som då är minst 18, redan är bokad på **samma pass**. Regeln gäller även adminbokning och varje nytt tillfälle i återkommande bokningar. Saknat födelsedatum tillåter egen bokning men räknas inte som myndigt sällskap. Födelsedatum får framöver läggas till/rättas av admin/SA i volontärprofilen; självbetjäningsvägen avvisar ändringar. Det hindrar att en känd minderårig kringgår spärren genom att ta bort eller ändra sitt datum.
+
+Kontroll vid enskild bokning, återkommande bokning och avbokning sker inom skrivtransaktionen. Sista myndiga personen kan inte avbokas medan minderåriga finns kvar på ett framtida aktivt pass; boka ersättare, boka om minderåriga eller ställ in hela passet först. Ändrat datum/återaktivering av ett pass kontrolleras också. Befintliga brister, och sådana som uppstår efter administrativa profil- eller engagemangsändringar, visas för admins under Planering och säkerhet. Inga gamla bokningar tas bort automatiskt. Detta kontrollerar bokningar och registrerade födelsedatum, inte faktisk närvaro eller identitet. Ålder räknas inte ut från namn eller administratörsroll, och andra volontärers födelsedatum visas inte. Skottårsfödelsedag räknas som 1 mars under år utan 29 februari.
+
+När närvaromodulen är aktiv ligger **Jag är här direkt under Mina bokningar** i menyn. Praktisk information har infällda grupper: **Inför och under ditt pass** (adress, aktuella rutiner, överlämning), **Introduktion och stöd** (introduktion, checklista, kontaktpersoner), **Volontärsträffar** och **Manual**. Länkar till rutiner/checklista/kontakter öppnar rätt grupp automatiskt.
+
+Uppföljning av inaktivitet sker efter **60 dygn** sedan senaste genomförda bokade passet, eller kontots skapande om genomförda pass saknas. Endast aktiva volontärer med aktivt engagemang flaggas. Närvarobekräftelser påverkar inte denna beräkning, och ingen automatisk inaktivering sker.
+
+Vid tilldelad åtkomst till flera katthem hämtar ålderskontrollen registrerat födelsedatum från det ordinarie hemmet via en skrivskyddad databasanslutning, utan att kopiera datumet till den andra profilen eller exponera det i dess svar. Ett känt födelsedatum i ordinarie hemmet går före lokala uppgifter; om det saknas används ett eventuellt lokalt administrerat datum.
+
+## Version 0.6.029 – ändringsbar uppföljning efter 30 dagar
+Standardgränsen för uppföljning är nu **30 dygn**, även vid uppgradering från den tidigare fasta 60-dagarsgränsen. Under **Administration → Uppföljning och kontakt → Volontärer att följa upp** kan Admin och SA ändra gränsen till ett heltal mellan 1 och 365 dagar för sitt katthem. Värdet lagras i `activity_settings`, följer med databasbackuper och skyddas med revisionskontroll. Ändringen loggas i adminhistoriken och listan räknas om direkt.
+
+Beräkningen utgår från senaste avslutade bokade passet, eller kontots skapande om sådana pass saknas. Samma inställda frist gäller nya konton. Endast aktiva volontärer med aktivt engagemang flaggas. Ingen automatisk inaktivering, gallring eller e-post sker på grund av uppföljningssignalen. Närvarobekräftelser påverkar inte beräkningen. Äldre dokumentavsnitt med fast gräns på 60 dagar gäller tidigare versioner.

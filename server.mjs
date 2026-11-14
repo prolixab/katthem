@@ -1,3 +1,4 @@
+import {createAgePolicy} from './age-policy.mjs';
 import {createPresence} from './presence.mjs';
 import {createBookingSettings} from './booking-settings.mjs';
 import {scheduleData,scheduleRange} from './schedule-data.mjs';
@@ -19,7 +20,7 @@ import {createMembers} from './members.mjs';
 import { isAdmin,isSuperAdmin,canManageAccount,isGreen } from './roles.mjs';
 import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
 import { createEmailSettings } from './email-settings.mjs';
-import { isInactive } from './activity.mjs';
+import { isInactive,createActivitySettings } from './activity.mjs';
 import { createReminders } from './reminders.mjs';
 import { parseVolunteersCsv } from './csv-import.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -152,6 +153,16 @@ if(!db.prepare('PRAGMA table_info(shift_routines)').all().some(c=>c.name==='temp
 const defaultShiftRoutines=['Storstäda köket och se över karantänen.','Storstäda rum 1 och 2.','Storstäda rum 4 och 5.','Storstäda entrén, tvättrum/toalett och städskrubbar.','Storstäda kontoret, valvet, gången genom katthemmet samt omklädningsrum.','Storstäda rum 6.','Storstäda rum 3 och 7.'];
 db.prepare('INSERT OR IGNORE INTO shift_routines(id,daily,weekly_json) VALUES(1,?,?)').run('Se över om något behöver städas. Töm återvinningen.',JSON.stringify(defaultShiftRoutines));
 function shiftRoutines(){const row=db.prepare('SELECT * FROM shift_routines WHERE id=1').get();return {revision:row.revision,daily:row.daily,weekly:JSON.parse(row.weekly_json),temporary:row.temporary_json?JSON.parse(row.temporary_json):null}}
+const ageSourceDatabases=new Map();
+function ageBirthDate(uid){
+ const local=db.prepare('SELECT birth_date FROM member_profiles WHERE user_id=?').get(uid)?.birth_date||'';
+ const link=portalRegistry?.prepare('SELECT source,user_id FROM shadows WHERE target=? AND local_id=?').get(process.env.PORTAL_SHELTER_ID,uid);if(!link)return local;
+ if(!portalRegistry.prepare('SELECT 1 FROM shelters WHERE id=?').get(link.source))return local;
+ let source=ageSourceDatabases.get(link.source);if(!source){const rootData=path.dirname(process.env.PORTAL_REGISTRY_PATH),folder=link.source==='huskvarna'?rootData:path.join(rootData,'shelters',link.source);source=new DatabaseSync(path.join(folder,'katthem.sqlite'),{readOnly:true});source.exec('PRAGMA busy_timeout=5000');ageSourceDatabases.set(link.source,source)}
+ return source.prepare('SELECT birth_date FROM member_profiles WHERE user_id=?').get(link.user_id)?.birth_date||local;
+}
+const activitySettings=createActivitySettings(db);
+const agePolicy=createAgePolicy(db,{getBirth:ageBirthDate});
 const checklist=createChecklist(db);
 const checklistIds=new Set(checklistGroups.flatMap(group=>group.items.map(item=>item.id)));
 const engagements=createEngagement(db);engagements.setChecklistIds(checklistIds);engagements.setChecklistSource(checklist);
@@ -167,7 +178,7 @@ function completedCounts(userId){
  return counts;
 }
 function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return checklist.idsFor(uid).every(id=>checked.has(id))}
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id)),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
 function pendingIntroductions(user){
  if(!isAdmin(user))return undefined;
@@ -183,7 +194,7 @@ function snapshot(user){
  const memberRows=members.list().map(m=>process.env.PORTAL_SHELTER_ID?{...m,shelter:currentShelterName()}:m);
  const directory=memberRows.flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  const contacts=memberRows.filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
- return {modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?memberRows:undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),...scheduleData(db,user,greenIds),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ return {modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?memberRows:undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),...scheduleData(db,user,greenIds),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -267,11 +278,12 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/schedule'&&req.method==='GET'){
   const range=scheduleRange(url.searchParams);ensureOpenHouse();schedule.ensure();
   const counts=completedCounts(),greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
-  return send({...scheduleData(db,user,greenIds,range),schedule_range:range,modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
+  return send({...scheduleData(db,user,greenIds,range),schedule_range:range,modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
  }
  if(url.pathname==='/api/profile'&&req.method==='PATCH'){
   const p=await body(req),allowed=['name','email','phone','messenger_url','birth_date','revision'];if(!p||Object.keys(p).some(k=>!allowed.includes(k))||!Number.isInteger(p.revision))fail('Endast egna kontaktuppgifter kan ändras här.');
   const profile=db.prepare('SELECT * FROM member_profiles WHERE user_id=?').get(user.id);if(!profile)fail('Profilen finns inte.',404);if(engagements.get(user.id)?.status==='purged')fail('Engagemanget har gallrats.',403);
+  if(!isAdmin(user)&&p.birth_date!==undefined&&p.birth_date!==profile.birth_date)fail('Födelsedatum ändras av admin eftersom det används för bokningsreglerna.',403);
   const fields={...profile,...p,animal_care_trained:Boolean(profile.animal_care_trained),volunteer_bag:Boolean(profile.volunteer_bag)};members.save(profile.id,fields);return send(snapshot(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)));
  }
  if(url.pathname==='/api/engagement'&&req.method==='PATCH'){const p=await body(req);db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(user.id,p,{self:true});db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}return send(snapshot(user))}
@@ -281,8 +293,8 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/bookings/recurring'&&req.method==='POST'){
  const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id; engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count:0});
  schedule.ensure();ensureOpenHouse();
- if(p.preview===true){const plan=recurring.preview(uid,p);engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count:plan.rows.filter(r=>r.status==='new').length});return send(plan)}
- recurring.book(uid,p,{validate:count=>engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count})});return send(snapshot(user));
+ if(p.preview===true){const plan=recurring.preview(uid,p);for(const row of plan.rows.filter(r=>r.status==='new'))agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id));engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count:plan.rows.filter(r=>r.status==='new').length});return send(plan)}
+ recurring.book(uid,p,{validate:(count,rows)=>{engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count});for(const row of rows)agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id))}});return send(snapshot(user));
  }
  if(url.pathname==='/api/bookings'&&req.method==='POST'){
 
@@ -294,6 +306,7 @@ const server=http.createServer(async(req,res)=>{
  if(new Date(slot.date+'T'+slot.start+':00')<=new Date())fail('Passet har redan börjat.');
  if(!db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(uid))fail('Volontären är inte aktiv.');
  if(db.prepare('SELECT id FROM bookings WHERE user_id=? AND slot_id=?').get(uid,slot.id))fail('Passet är redan bokat.',409);
+ agePolicy.assertBook(uid,slot);
  const recommendedLimit=bookingSettings.get().recommended_limit;
  if(db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=recommendedLimit&&p.confirmOverLimit!==true)fail('Det är redan minst '+recommendedLimit+' anmälda. Vill du boka ändå?',409,'RECOMMENDED_LIMIT');
  const overlaps=db.prepare('SELECT s.title,s.start,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id=? AND s.date=? AND s.start<? AND s.end>?').all(uid,slot.date,slot.end,slot.start);
@@ -301,9 +314,12 @@ const server=http.createServer(async(req,res)=>{
  db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(uid,slot.id);db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e}return send(snapshot(user));}
  if(url.pathname.startsWith('/api/bookings/')&&req.method==='DELETE'){
+ db.exec('BEGIN IMMEDIATE');try{
  const b=db.prepare('SELECT b.*,s.date,s.start FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.id=?').get(Number(url.pathname.split('/').pop()));if(!b)fail('Bokningen finns inte.',404);
  if(!isAdmin(user)){if(b.user_id!==user.id)fail('Du saknar behörighet.',403);if(new Date(b.date+'T'+b.start+':00')-Date.now()<86400000)fail('Mindre än 24 timmar kvar. Kontakta katthemmets bemanningsgrupp i Messenger.');}
- db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);return send(snapshot(user));}
+ agePolicy.assertRemove(b.user_id,db.prepare('SELECT * FROM slots WHERE id=?').get(b.slot_id));
+ db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error}return send(snapshot(user));}
+
  if(url.pathname==='/api/calendar/week'&&req.method==='GET'){
   const start=url.searchParams.get('start')||'';
   if(!/^\d{4}-\d{2}-\d{2}$/.test(start))fail('Välj en giltig vecka.');
@@ -334,6 +350,7 @@ const server=http.createServer(async(req,res)=>{
  }
  if(/^\/api\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){const p=await body(req);news.dismiss(user.id,Number(url.pathname.split('/')[3]),p.revision);return send(snapshot(user))}
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(url.pathname==='/api/activity-settings'&&req.method==='PUT'){activitySettings.save(await body(req));return send(snapshot(user))}
  if(url.pathname==='/api/booking-settings'&&req.method==='PUT'){bookingSettings.save(await body(req));return send(snapshot(user))}
  if(/^\/api\/members\/\d+\/phone$/.test(url.pathname)&&req.method==='PATCH'){
   const id=Number(url.pathname.split('/')[3]),p=await body(req);if(typeof p.phone!=='string'||p.phone.length>100||/[\r\n\0]/.test(p.phone)||!Number.isInteger(p.revision)||Object.keys(p).some(k=>!['phone','revision'].includes(k)))fail('Ange telefonnummer med högst 100 tecken och öppna formuläret igen vid behov.');
@@ -450,6 +467,7 @@ const server=http.createServer(async(req,res)=>{
     db.prepare('UPDATE slots SET date=?,start=?,end=?,title=?,note=?,extra_info=?,cancelled=0 WHERE id=?').run(p.date,p.start,p.end,p.title.trim(),p.note||'',(p.extra_info??slot.extra_info).trim(),id);
     if(slot.cancelled||p.date!==slot.date||p.start!==slot.start||p.end!==slot.end)db.prepare('DELETE FROM reminder_delivery WHERE booking_id IN (SELECT id FROM bookings WHERE slot_id=?)').run(id);
    }
+   if(p.date!==undefined&&(p.date!==slot.date||slot.cancelled))agePolicy.assertSupported(db.prepare('SELECT * FROM slots WHERE id=?').get(id));
    notifications.queue(slot,db.prepare('SELECT * FROM slots WHERE id=?').get(id));
    db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e}
@@ -468,6 +486,6 @@ const reminderTimer=setInterval(()=>maintenance().catch(()=>console.error('Bakgr
 maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.'));
 server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Katthemmet: http://${host}:${server.address().port}`));
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{
- clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain()]);portalRegistry?.close();db.close();process.exit(0)});
+ clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain()]);for(const source of ageSourceDatabases.values())source.close();portalRegistry?.close();db.close();process.exit(0)});
  setTimeout(()=>process.exit(1),10000).unref();
 });

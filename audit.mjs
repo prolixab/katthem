@@ -5,6 +5,7 @@ export function createAudit(db,{now=()=>Date.now()}={}){
  function fromRequest(route,method,p={}){
   if(route==='/api/checklist/template'&&method==='PUT')return {action:'checklist.updated',details:{applies_to:p.applies_to}};
   if(route==='/api/presence/settings'&&method==='PUT')return {action:p.enabled?'module.presence.enabled':'module.presence.disabled',details:{}};
+  if(route==='/api/activity-settings'&&method==='PUT')return {action:'activity.settings',details:{inactive_days:p.inactive_days}};
   if(route==='/api/booking-settings'&&method==='PUT')return {action:'booking.recommendation',details:{recommended_limit:p.recommended_limit}};
   const profileIntro=route.match(/^\/api\/engagements\/(\d+)\/introduction-status$/);if(profileIntro&&method==='PATCH')return {action:p.completed?'introduction.approved':'introduction.review',subject_id:Number(profileIntro[1]),details:{}};
   const intro=route.match(/^\/api\/engagements\/(\d+)\/introduction$/);if(intro&&method==='PATCH')return {action:p.independent_approved?'introduction.approved':'introduction.updated',subject_id:Number(intro[1]),details:{practical_completed:Boolean(p.practical_completed),independent_approved:Boolean(p.independent_approved)}};

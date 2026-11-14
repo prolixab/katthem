@@ -256,6 +256,15 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const download=await call(downloadRoute,'GET',null,sa.cookie);assert.equal(download.status,200);assert.match(download.headers.get('content-type'),/application\/zip/);assert.match(download.headers.get('content-disposition'),/attachment; filename="katthem-backup-/);assert.equal(download.headers.get('cache-control'),'no-store');const zipBytes=Buffer.from(await download.arrayBuffer());assert.equal(zipBytes.readUInt32LE(0),0x04034b50);
   assert.ok((await(await call('portal/audit','GET',null,sa.cookie)).json()).entries.some(e=>e.action==='backup.downloaded'));
 
+  // The age rule follows the source account without copying its private birth date to the shadow.
+  const agePersonResponse=await call('users','POST',{name:'Ung med åtkomst',email:'young-cross@example.se',password},sa.cookie,'huskvarna');assert.equal(agePersonResponse.status,200);const agePerson=(await agePersonResponse.json()).users.find(u=>u.email==='young-cross@example.se');
+  const ageSource=new DatabaseSync(path.join(dir,'katthem.sqlite'));try{ageSource.prepare('UPDATE member_profiles SET birth_date=? WHERE user_id=?').run(String(new Date().getFullYear()-16)+'-01-01',agePerson.id)}finally{ageSource.close()}
+  assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:agePerson.id,target:b,role:'volunteer',enabled:true},sa.cookie)).status,200);
+  const ageRegistry=new DatabaseSync(path.join(dir,'shelters.sqlite'));const ageShadow=ageRegistry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get('huskvarna',agePerson.id,b);ageRegistry.close();assert.ok(ageShadow);
+  const crossState=await(await call('state','GET',null,sa.cookie,b)).json(),crossSlot=crossState.slots.find(s=>!s.cancelled&&new Date(s.date+'T'+s.start)>new Date()&&!s.booked);assert.ok(crossSlot);assert.equal(crossState.members.find(m=>m.user_id===ageShadow.local_id).birth_date,'');
+  const crossBlocked=await call('bookings','POST',{slotId:crossSlot.id,userId:ageShadow.local_id},sa.cookie,b);assert.equal(crossBlocked.status,409);assert.equal((await crossBlocked.json()).code,'ADULT_REQUIRED');
+  const ageTarget=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite'));try{ageTarget.prepare("UPDATE member_profiles SET birth_date='1980-01-01' WHERE user_id=?").run(ageShadow.local_id)}finally{ageTarget.close()}
+  assert.equal((await call('bookings','POST',{slotId:crossSlot.id,userId:ageShadow.local_id},sa.cookie,b)).status,409);
   const registry=new DatabaseSync(path.join(dir,'shelters.sqlite'));assert.equal(registry.prepare('SELECT COUNT(*) n FROM shelters').get().n,3);registry.close();
  }finally{if(portal)await portal.close();rmSync(dir,{recursive:true,force:true})}
 });

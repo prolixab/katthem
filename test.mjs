@@ -4,7 +4,7 @@ import {checklistGroups} from './checklist.mjs';
 import {isAdmin,isSuperAdmin,canManageAccount,isGreen} from './roles.mjs';
 import {upgradeDefaultShifts} from './schedule-upgrade.mjs';
 import {createEmailSettings} from './email-settings.mjs';
-import {monthAgo,isInactive} from './activity.mjs';
+import {monthAgo,isInactive,createActivitySettings} from './activity.mjs';
 import {createReminders} from './reminders.mjs';
 import vm from 'node:vm';
 import {parseVolunteersCsv} from './csv-import.mjs';
@@ -36,6 +36,11 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  r=await call('users','POST',{name:'Testvolontär',email:'test@example.se',password:'password12345'},ac);assert.equal(r.status,200);const uid=(await r.json()).users.find(u=>u.email==='test@example.se').id;
  assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
  const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');assert.equal((await call('password','POST',{current:'Password12345',password:'OwnAdminPassword12345'},newAdminCookie)).status,200);
+ const activityConfig=(await(await call('state','GET',null,ac)).json()).activity_settings;assert.equal(activityConfig.inactive_days,30);
+ assert.equal((await call('activity-settings','PUT',{inactive_days:45,revision:activityConfig.revision},vc)).status,403);
+ const activitySaved=await call('activity-settings','PUT',{inactive_days:45,revision:activityConfig.revision},newAdminCookie);assert.equal(activitySaved.status,200);assert.equal((await activitySaved.json()).activity_settings.inactive_days,45);
+ assert.equal((await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},ac)).status,409);
+ assert.equal((await call('activity-settings','PUT',{inactive_days:30,revision:activityConfig.revision+1},ac)).status,200);
  // Shift routines are editable by admin and SA; volunteer writes and stale updates fail.
  const shiftState=await (await call('state','GET',null,ac)).json(),shiftRoutines=shiftState.shift_routines;
  assert.equal(shiftRoutines.weekly.length,7);const changedShift={revision:shiftRoutines.revision,daily:'Daglig rutin för test',weekly:shiftRoutines.weekly.map((text,i)=>i===1?'Ny måndagsrutin':text)};
@@ -340,6 +345,23 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const beforeShelter=await(await call('state','GET',null,ac)).json(),shelterProfile=beforeShelter.members.find(m=>m.user_id===volunteerId);
  for(const city of ['Huskvarna','Jönköping','Annan ort']){const saved=await call('members/'+shelterProfile.id,'PUT',{...shelterProfile,shelter:city,revision:(await(await call('state','GET',null,ac)).json()).members.find(m=>m.id===shelterProfile.id).revision},ac);assert.equal(saved.status,200);const own=await(await call('state','GET',null,vc)).json();assert.equal(own.shelter.configured,city!=='Annan ort');assert.equal(own.volunteer_info.location,city==='Annan ort'?'':beforeShelter.volunteer_info.location);assert.equal(own.door_code.code,city==='Annan ort'?'':beforeShelter.door_code.code);assert.ok(!own.shelter_admin)}
  assert.equal((await call('members/'+shelterProfile.id,'PUT',{...shelterProfile,revision:(await(await call('state','GET',null,ac)).json()).members.find(m=>m.id===shelterProfile.id).revision},ac)).status,200);
+ // Age rules are enforced at the HTTP boundary, including admin/recurring writes and concurrent cancellations.
+ const ageAccounts=[];for(const [name,email] of [['Minderårig','minor-age@example.se'],['Myndig','adult-age@example.se'],['Okänd ålder','unknown-age@example.se']]){const created=await call('users','POST',{name,email,password:'AgeTestPassword12345'},ac);assert.equal(created.status,200);ageAccounts.push((await created.json()).users.find(u=>u.email===email).id)}
+ const [minorId,adultId,unknownId]=ageAccounts,ageDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));
+ try{ageDb.prepare('UPDATE member_profiles SET birth_date=? WHERE user_id=?').run(String(new Date().getFullYear()-16)+'-01-01',minorId);ageDb.prepare("UPDATE member_profiles SET birth_date='1980-01-01' WHERE user_id=?").run(adultId);for(const id of ageAccounts)ageDb.prepare('UPDATE engagements SET needs_intro=0,routine_version=(SELECT COALESCE(MAX(version),0) FROM routine_versions) WHERE user_id=?').run(id)}finally{ageDb.close()}
+ const minorLogin=await call('login','POST',{email:'minor-age@example.se',password:'AgeTestPassword12345'}),minorCookie=minorLogin.headers.get('set-cookie').split(';')[0];assert.equal((await call('password','POST',{current:'AgeTestPassword12345',password:'MinorOwnPassword12345'},minorCookie)).status,200);
+ const minorOwn=(await(await call('state','GET',null,minorCookie)).json()).my_profile;assert.equal((await call('profile','PATCH',{revision:minorOwn.revision,birth_date:''},minorCookie)).status,403);
+ const ageDate=new Date();ageDate.setDate(ageDate.getDate()+30);const ageDay=ageDate.toISOString().slice(0,10);
+ const ageCreated=await call('slots','POST',{date:ageDay,start:'13:00',end:'14:00',title:'Åldersregel'},ac);assert.equal(ageCreated.status,200);const ageSlot=(await ageCreated.json()).slots.find(s=>s.title==='Åldersregel');
+ let blockedAge=await call('bookings','POST',{slotId:ageSlot.id,userId:minorId},ac);assert.equal(blockedAge.status,409);assert.equal((await blockedAge.json()).code,'ADULT_REQUIRED');
+ assert.equal((await call('bookings','POST',{slotId:ageSlot.id,userId:unknownId},ac)).status,200);assert.equal((await call('bookings','POST',{slotId:ageSlot.id},minorCookie)).status,409);
+ assert.equal((await call('bookings','POST',{slotId:ageSlot.id,userId:adultId},ac)).status,200);assert.equal((await call('bookings','POST',{slotId:ageSlot.id},minorCookie)).status,200);
+ let ageState=await(await call('state','GET',null,ac)).json(),adultBooking=ageState.bookings.find(b=>b.slot_id===ageSlot.id&&b.user_id===adultId);assert.equal((await call('bookings/'+adultBooking.id,'DELETE',null,ac)).status,409);
+ const repeatSlot=ageState.slots.find(s=>s.date>ageDay&&s.kind==='regular'&&!s.cancelled);assert.ok(repeatSlot);const repeatAge={slotId:repeatSlot.id,interval:1,until:repeatSlot.date,userId:minorId};assert.equal((await call('bookings/recurring','POST',{...repeatAge,preview:true},ac)).status,409);
+ const minorBooking=ageState.bookings.find(b=>b.slot_id===ageSlot.id&&b.user_id===minorId);const cancelledAge=await Promise.all([call('bookings/'+minorBooking.id,'DELETE',null,ac),call('bookings/'+adultBooking.id,'DELETE',null,ac)]);assert.equal(cancelledAge[0].status,200);assert.ok([200,409].includes(cancelledAge[1].status));if(cancelledAge[1].status===409)assert.equal((await call('bookings/'+adultBooking.id,'DELETE',null,ac)).status,200);
+ const raceDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));try{raceDb.prepare("UPDATE member_profiles SET birth_date='1980-01-01' WHERE user_id=?").run(unknownId)}finally{raceDb.close()}
+ assert.equal((await call('bookings','POST',{slotId:ageSlot.id,userId:adultId},ac)).status,200);assert.equal((await call('bookings','POST',{slotId:ageSlot.id,userId:minorId},ac)).status,200);
+ ageState=await(await call('state','GET',null,ac)).json();const twoAdults=ageState.bookings.filter(b=>b.slot_id===ageSlot.id&&[adultId,unknownId].includes(b.user_id));assert.equal(twoAdults.length,2);const raceResponses=await Promise.all(twoAdults.map(b=>call('bookings/'+b.id,'DELETE',null,ac)));assert.deepEqual(raceResponses.map(r=>r.status).sort(),[200,409]);
  const csv=await call('export','GET',null,ac);assert.match(await csv.text(),/Testpass/);
  await stop();
  const legacy=new DatabaseSync(path.join(dir,'katthem.sqlite'));const originalHash=legacy.prepare('SELECT password FROM users WHERE email=?').get('admin@katthem.local').password;const danielId=Number(legacy.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,'admin',?)").run('Daniel','daniel@staahlis.se',originalHash,Date.now()).lastInsertRowid);legacy.prepare('INSERT INTO sessions VALUES(?,?,?)').run('old-daniel-session',danielId,Date.now()+86400000);legacy.prepare('DELETE FROM migrations WHERE name=?').run('superadmin-daniel-20261024');legacy.exec("ALTER TABLE slots DROP COLUMN cancelled; UPDATE slots SET capacity=2; UPDATE slots SET title='Kvällspass' WHERE start='18:00';" );legacy.close();
@@ -378,8 +400,8 @@ test('CSV: BOM, citattecken, radbrytningar och validering',()=>{
  assert.throws(()=>parseVolunteersCsv('namn;e-post;lösenord\n'+Array.from({length:501},(_,i)=>'Namn;a'+i+'@example.se;Password12345').join('\n')),/500/);
 });
 
-test('60 dagars frånvaro: gräns och nya konton',()=>{
- const now=new Date(2030,2,31,12),cutoff=now.getTime()-60*86400000;assert.equal(monthAgo(now),new Date(2030,1,28,12).getTime());
+test('30 dagars frånvaro: gräns och nya konton',()=>{
+ const now=new Date(2030,2,31,12),cutoff=now.getTime()-30*86400000;assert.equal(monthAgo(now),new Date(2030,1,28,12).getTime());
  const user={role:'volunteer',active:1,created_at:cutoff-1};assert.equal(isInactive(user,cutoff,now),true);assert.equal(isInactive(user,cutoff+1,now),false);assert.equal(isInactive({...user,created_at:now.getTime()},undefined,now),false);assert.equal(isInactive(user,undefined,now),true);assert.equal(isInactive({...user,active:0},cutoff-1,now),false);assert.equal(isInactive({...user,role:'admin'},cutoff-1,now),false);
 });
 test('E-postpåminnelser: filtrering, försök igen och skydd mot dubbla utskick',async()=>{
@@ -580,4 +602,13 @@ test('E-postinställningar: atomiskt sparande tål tillfälliga Windows-lås och
  writeEmailSettings('fake.json','new',io);assert.equal(target,'new');assert.equal(attempts,3);assert.equal(pauses,2);
  target='old';attempts=0;io.rename=()=>{attempts++;throw Object.assign(Error('locked'),{code:'EACCES'})};assert.throws(()=>writeEmailSettings('fake.json','new',io),{code:'EACCES'});assert.equal(attempts,6);assert.equal(target,'old');assert.equal(temp,null);
  attempts=0;io.rename=()=>{attempts++;throw Object.assign(Error('disk'),{code:'ENOSPC'})};assert.throws(()=>writeEmailSettings('fake.json','new',io),{code:'ENOSPC'});assert.equal(attempts,1);assert.equal(target,'old');
+});
+
+test('Uppföljningsgräns: standard 30, lokalt sparande, revisionsskydd och omräkning',()=>{
+ const db=new DatabaseSync(':memory:'),other=new DatabaseSync(':memory:');try{
+ const settings=createActivitySettings(db);assert.equal(settings.get().inactive_days,30);assert.equal(createActivitySettings(other).get().inactive_days,30);
+ const now=new Date('2030-01-31T12:00:00Z'),last=now.getTime()-40*86400000,user={role:'volunteer',active:1,created_at:last};assert.equal(isInactive(user,last,now,settings.get().inactive_days),true);
+ settings.save({inactive_days:45,revision:0});assert.equal(createActivitySettings(db).get().inactive_days,45);assert.equal(isInactive(user,last,now,settings.get().inactive_days),false);assert.equal(createActivitySettings(other).get().inactive_days,30);
+ assert.throws(()=>settings.save({inactive_days:20,revision:0}),{status:409});for(const inactive_days of [0,366,1.5,'30'])assert.throws(()=>settings.save({inactive_days,revision:1}),{status:400});
+ }finally{db.close();other.close()}
 });

@@ -28,7 +28,7 @@ export function createRecurringBookings(db,{recommendedLimit=()=>5}={}){
    const plan=preview(uid,p);
    if(p.key!==plan.key)fail('Schemat har ändrats. Förhandsgranska bokningarna igen.',409,'STALE_RECURRING');
    const pending=plan.rows.filter(r=>r.status==='new');if(!pending.length)fail('Inga nya pass att boka.');
-   validate(pending.length);
+   validate(pending.length,pending);
    if(pending.some(r=>r.over_limit)&&p.confirmOverLimit!==true)fail('Bekräfta att du vill boka trots minst '+plan.recommended_limit+' anmälda.',409,'RECOMMENDED_LIMIT');
    if(pending.some(r=>r.overlap)&&p.confirmOverlap!==true)fail('Bekräfta att du vill boka överlappande pass.',409,'OVERLAPPING_BOOKING');
    for(const row of pending)db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(uid,row.slot_id);
