@@ -10,8 +10,8 @@ export function calendarEvent(slot,{appUrl,location='',shelterId='',now=new Date
 }
 
 export function calendarEvents(slots,options){
- if(!slots.length){const empty=calendarEvent({id:0,date:'2000-01-01',start:'00:00',end:'00:01',title:''},options);return empty.slice(0,empty.indexOf('BEGIN:VEVENT'))+'END:VCALENDAR\r\n'}
- const calendars=slots.map(slot=>calendarEvent(slot,options));
+ if(!slots.length){const empty=calendarEvent({id:0,date:'2000-01-01',start:'00:00',end:'00:01',title:''},typeof options==='function'?options({}):options);return empty.slice(0,empty.indexOf('BEGIN:VEVENT'))+'END:VCALENDAR\r\n'}
+ const calendars=slots.map(slot=>calendarEvent(slot,typeof options==='function'?options(slot):options));
  const header=calendars[0].slice(0,calendars[0].indexOf('BEGIN:VEVENT'));
  return header+calendars.map(ics=>ics.slice(ics.indexOf('BEGIN:VEVENT'),ics.indexOf('END:VCALENDAR'))).join('')+'END:VCALENDAR\r\n';
 }

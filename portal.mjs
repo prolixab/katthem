@@ -1,6 +1,7 @@
 import {createScheduleDisplay,displaySchedule,displayNames} from './display.mjs';
 import {readFileSync,createReadStream,statSync} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
+import {calendarEvents} from './calendar.mjs';
 import {createBackups} from './backups.mjs';
 import {createAudit} from './audit.mjs';
 import {requiresPasswordChange} from './password-policy.mjs';
@@ -157,7 +158,28 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }
    if(url.pathname==='/api/branding'&&req.method==='GET'){target=requested||p?.selected||primary;if(!house(target))fail('Katthemmet finns inte.',404);return send(createBranding((await worker(target)).db).get())}
    if(url.pathname==='/api/portal'&&req.method==='GET')return send(publicList());
+   if(['/api/portal/my-bookings','/api/portal/my-bookings/calendar'].includes(url.pathname)&&req.method==='GET'){
+    if(!p)fail('Logga in för att fortsätta.',401);
+    const bookings=[];
+    for(const h of houses()){
+     if(!access(p,h.id))continue;
+     const id=h.id===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,h.id)?.local_id;
+     if(!id)continue;
+     const w=await worker(h.id),location=w.db.prepare('SELECT location FROM volunteer_info WHERE id=1').get()?.location||'';
+     for(const slot of w.db.prepare('SELECT s.*,b.id booking_id FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? ORDER BY s.date,s.start').all(id)){
+      if(new Date(slot.date+'T'+slot.end)<=new Date())continue;
+      bookings.push({...slot,shelter_id:h.id,shelter_name:h.name,location});
+     }
+    }
+    bookings.sort((a,b)=>(a.date+a.start+a.shelter_id).localeCompare(b.date+b.start+b.shelter_id));
+    if(url.pathname.endsWith('/calendar')){
+     const ics=calendarEvents(bookings.filter(b=>!b.cancelled),slot=>({appUrl:origin,location:slot.location,shelterId:slot.shelter_id}));
+     res.writeHead(200,{'Content-Type':'text/calendar; charset=utf-8','Content-Disposition':'attachment; filename="mina-bokningar.ics"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});return res.end(ics);
+    }
+    return send({bookings});
+   }
    if(url.pathname==='/api/login'&&req.method==='POST'){
+
     const fields=json(payload);target=fields.portal_shelter||primary;if(!house(target))fail('Välj ett katthem.');payload=Buffer.from(JSON.stringify({email:fields.email,password:fields.password}));
    }else if(url.pathname==='/api/portal/engagement'&&req.method==='PATCH'){
     if(!p||!access(p,target))fail('Logga in och välj ett katthem.',403);const localId=target===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id;if(!localId)fail('Öppna katthemmet först.');return send(lifecycle.update(target,localId,json(payload),{self:true}));

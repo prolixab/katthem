@@ -135,11 +135,11 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  let marking=await call('users/'+volunteerId,'PATCH',{green:true},ac);assert.equal(marking.status,200);
  let marked=(await marking.json()).users.find(u=>u.id===volunteerId);assert.equal(marked.green,false);assert.equal(marked.active,1);
  for(const item of checklistGroups.flatMap(g=>g.items))assert.equal((await call('checklist','PATCH',{item_id:item.id,checked:true},vc)).status,200);
- assert.equal((await(await call('state','GET',null,vc)).json()).user.green,true);
+ assert.equal((await(await call('state','GET',null,vc)).json()).user.green,false);
  assert.equal((await call('checklist','PATCH',{item_id:'tour',checked:false},vc)).status,200);
  assert.equal((await(await call('state','GET',null,vc)).json()).user.green,false);
  assert.equal((await call('checklist','PATCH',{item_id:'tour',checked:true},vc)).status,200);assert.equal(marked.completed_shifts,0);
- let ownStats=(await(await call('state','GET',null,vc)).json());assert.equal(ownStats.user.green,true);assert.equal(ownStats.user.completed_shifts,0);assert.deepEqual(ownStats.users,[]);
+ let ownStats=(await(await call('state','GET',null,vc)).json());assert.equal(ownStats.user.green,false);assert.equal(ownStats.user.completed_shifts,0);assert.deepEqual(ownStats.users,[]);
  marking=await call('users/'+volunteerId,'PATCH',{green:false},ac);marked=(await marking.json()).users.find(u=>u.id===volunteerId);assert.equal(marked.green,false);assert.equal(marked.active,1);
  assert.equal((await call('users/'+volunteerId,'PATCH',{green:'true'},ac)).status,400);
  const importCsv='namn;e-post;lösenord;grön\n"Åsa; Kattvän";asa@example.se;Password12345;nej\nÖrjan;orjan@example.se;Password67890;ja';
@@ -408,6 +408,7 @@ test('Gränssnitt: roller, öppet hus, påminnelser och bekräftelse över rekom
  assert.deepEqual(Array.from(staffingCases),[true,false,false,false,false,true,false]);
 
  fixture.booking_settings={recommended_limit:8,revision:0};vm.runInContext("state=fixture;view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/Bokningsrekommendation/);assert.match(elements.get('#app').innerHTML,/name="recommended_limit"[^>]*value="8"/);assert.match(elements.get('#app').innerHTML,/Volontärer att följa upp/);assert.equal((elements.get('#app').innerHTML.match(/<details class="admin-section"/g)||[]).length,12);assert.doesNotMatch(elements.get('#app').innerHTML,/Gör till admin/);assert.match(elements.get('#app').innerHTML,/Födelsedagar/);assert.match(elements.get('#app').innerHTML,/dina pass inom nästa dygn/);
+ const priorityHtml=elements.get('#app').innerHTML,priorityNav=priorityHtml.match(/<nav class="nav">[\s\S]*?<\/nav>/)[0];assert.ok(priorityNav.indexOf('data-view="staffing"')<priorityNav.indexOf('data-view="mine"'));const groups=['admin-daily','admin-followup','admin-information','admin-tools','admin-personalisation'];for(let i=1;i<groups.length;i++)assert.ok(priorityHtml.indexOf('id="'+groups[i-1]+'"')<priorityHtml.indexOf('id="'+groups[i]+'"'));assert.ok(priorityHtml.indexOf('data-admin-section="engagement"')<priorityHtml.indexOf('data-admin-section="csv"'));assert.ok(priorityHtml.indexOf('data-admin-section="csv"')<priorityHtml.indexOf('data-admin-section="branding"'));assert.doesNotMatch(priorityHtml,/data-admin-section="backups"|data-admin-section="shelters"/);
  fixture.slots[0].mine=0;vm.runInContext("view='schedule';render()",context);assert.match(elements.get('#app').innerHTML,/Hantera pass<\/button><button class="primary self-book-card" data-self-book="5">Bekräfta bokning/);fixture.slots[0].mine=1;vm.runInContext("view='schedule';render()",context);assert.doesNotMatch(elements.get('#app').innerHTML,/data-self-book=/);vm.runInContext("view='admin';render()",context);
  vm.runInContext('memberForm()',context);assert.match(elements.get('#modal').innerHTML,/option value="admin"/);
  assert.doesNotMatch(elements.get('#app').innerHTML,/Skapa öppet hus/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-admin-section="events"|data-action="new-event"/);assert.match(vm.runInContext('bulletinBoard()',context),/Skapa händelse/);vm.runInContext("view='members';render()",context);assert.doesNotMatch(elements.get('#app').innerHTML,/Lägg till volontärkonto|Skapa adminkonto/);assert.match(elements.get('#app').innerHTML,/Lägg till volontär/);assert.doesNotMatch(elements.get('#app').innerHTML,/data-role-user=|data-reset-password=|data-green-user=|data-user=/);vm.runInContext('memberProfile(2)',context);assert.match(elements.get('#modal').innerHTML,/Gör till admin/);assert.match(elements.get('#modal').innerHTML,/Senast på plats/);
@@ -464,7 +465,7 @@ assert.match(elements.get('#app').innerHTML,/Prenumerera på mina pass/);
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/Min första tid på katthemmet/);
  fixture.user.green=true;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/onboarding-checklist|data-checklist-item/);assert.match(elements.get('#app').innerHTML,/Manual för volontärer/);
  fixture.user.green=false;vm.runInContext('render()',context);assert.match(elements.get('#app').innerHTML,/data-checklist-item="sanitation" checked/);
- fixture.user.role='superadmin';fixture.portal={selected:'huskvarna',global_superadmin:true,shelters:[{id:'huskvarna',name:'Huskvarna / Jönköping'},{id:'other',name:'Annat katthem'}]};fixture.shelter={name:'Huskvarna / Jönköping'};vm.runInContext("view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/portal-shelter/);assert.match(elements.get('#app').innerHTML,/data-admin-section="shelters"><summary>Hantera katthem och åtkomst<\/summary>/);assert.doesNotMatch(elements.get('#app').innerHTML.match(/data-admin-section="create"[\s\S]*?<\/details>/)[0],/manage-shelters/);assert.match(elements.get('#app').innerHTML,/Annat katthem/);
+ fixture.user.role='superadmin';fixture.portal={selected:'huskvarna',global_superadmin:true,shelters:[{id:'huskvarna',name:'Huskvarna / Jönköping'},{id:'other',name:'Annat katthem'}]};fixture.shelter={name:'Huskvarna / Jönköping'};vm.runInContext("view='admin';render()",context);assert.match(elements.get('#app').innerHTML,/portal-shelter/);assert.match(elements.get('#app').innerHTML,/data-admin-section="shelters"><summary>Hantera katthem och åtkomst<\/summary>/);assert.doesNotMatch(elements.get('#app').innerHTML.match(/data-admin-section="create"[\s\S]*?<\/details>/)[0],/manage-shelters/);assert.match(elements.get('#app').innerHTML,/Annat katthem/);const superPriority=elements.get('#app').innerHTML;assert.ok(superPriority.indexOf('data-admin-section="backups"')<superPriority.indexOf('id="admin-followup"'));assert.ok(superPriority.indexOf('data-admin-section="shelters"')<superPriority.indexOf('id="admin-followup"'));
  fixture.portal.global_superadmin=false;fixture.user.role='admin';vm.runInContext('render()',context);assert.doesNotMatch(elements.get('#app').innerHTML,/data-action="manage-shelters"/);delete fixture.portal;
 
 
@@ -526,7 +527,7 @@ test('Roller: admin och superadmin delar verksamhetsbehörighet men kontoskydd s
  assert.equal(canManageAccount(admin,volunteer),true);assert.equal(canManageAccount(admin,admin),false);assert.equal(canManageAccount(admin,superadmin),false);assert.equal(canManageAccount(superadmin,admin),true);assert.equal(canManageAccount(superadmin,superadmin),true);
 });
 
-test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},9,true),false);assert.equal(isGreen({role:'volunteer'},10,true),true);assert.equal(isGreen({role:'volunteer'},100,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,true),true)});
+test('Admins och superadmins är gröna även utan genomförda pass',()=>{assert.equal(isGreen({role:'admin'},0),true);assert.equal(isGreen({role:'superadmin'},0),true);assert.equal(isGreen({role:'volunteer'},9,true),false);assert.equal(isGreen({role:'volunteer'},10,true),true);assert.equal(isGreen({role:'volunteer'},100,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,false),false);assert.equal(isGreen({role:'volunteer',green_manual:true},0,true),false)});
 
 test('Volontärer: profiler, status, styrelseansvar, unika e-postadresser och samtidighet',()=>{
  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,email TEXT UNIQUE)');try{
@@ -572,3 +573,11 @@ test('Dörrkod: inloggade ser koden, endast admin och superadmin ser redigering'
 });
 
 test('Publicering: Kattinfo saknas, medlemmar och städning finns utan kalendertext',()=>{const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8');assert.doesNotMatch(source,/function kattinfoPage|kattinfo_enabled|0\.x\.001|LOKALT FÖRSLAG/);assert.match(source,/function membersPage/);assert.doesNotMatch(source,/<h3>\$\{esc\(s.title\)\}<\/h3>\$\{cleaningNote/);assert.match(source,/bemanningsgrupp i Messenger/);assert.doesNotMatch(source,/Kontakta administratören/)});
+
+test('E-postinställningar: atomiskt sparande tål tillfälliga Windows-lås och bevarar gammal fil vid fel',async()=>{
+ const {writeEmailSettings}=await import('./email-settings.mjs');let target='old',temp=null,attempts=0,pauses=0;
+ const io={write:(file,data,options)=>{assert.equal(options.flag,'wx');temp=data},rename:()=>{if(attempts++<2)throw Object.assign(Error('locked'),{code:'EPERM'});target=temp;temp=null},remove:()=>{temp=null},pause:()=>{pauses++}};
+ writeEmailSettings('fake.json','new',io);assert.equal(target,'new');assert.equal(attempts,3);assert.equal(pauses,2);
+ target='old';attempts=0;io.rename=()=>{attempts++;throw Object.assign(Error('locked'),{code:'EACCES'})};assert.throws(()=>writeEmailSettings('fake.json','new',io),{code:'EACCES'});assert.equal(attempts,6);assert.equal(target,'old');assert.equal(temp,null);
+ attempts=0;io.rename=()=>{attempts++;throw Object.assign(Error('disk'),{code:'ENOSPC'})};assert.throws(()=>writeEmailSettings('fake.json','new',io),{code:'ENOSPC'});assert.equal(attempts,1);assert.equal(target,'old');
+});

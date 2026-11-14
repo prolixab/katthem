@@ -71,3 +71,4 @@ dialog{background:var(--surface,#fff)}.slot.booked{background:color-mix(in srgb,
 .booking-help{margin:16px 0 24px}.booking-help h2{font-size:18px;margin:0 0 8px}.booking-help p{font-size:14px}
 
 .presence-qr{display:block;width:min(100%,320px);height:auto;margin:16px auto}.presence-prompt{margin-bottom:22px}
+.admin-priority-group{margin-top:34px;padding-top:22px;border-top:1px solid var(--line)}.admin-priority-group:first-of-type{margin-top:24px;padding-top:0;border-top:0}.admin-priority-group>h2{font-size:22px;margin-bottom:8px}.admin-priority-group>.small{margin-bottom:16px}.admin-priority-group>.actions{margin:14px 0}.admin-priority-group .admin-section{margin-top:14px}
