@@ -9,7 +9,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath} from 'node:url';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const safePath=(root,name)=>{if(typeof name!=='string'||!name||name.includes('\\')||path.isAbsolute(name)||name.split('/').some(p=>!p||p==='.'||p==='..'))throw Error('Ogiltig sökväg i säkerhetskopian.');const p=path.resolve(root,name);if(!p.startsWith(path.resolve(root)+path.sep))throw Error('Ogiltig sökväg.');return p};
-function removeTransientData(file){const db=new DatabaseSync(file);try{let removed=false;for(const table of presenceModule.transientTables)if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)){db.exec('DELETE FROM '+table);removed=true}if(removed)db.exec('VACUUM')}finally{db.close()}}
+function removeTransientData(file){const db=new DatabaseSync(file);try{let removed=false;for(const table of [...presenceModule.transientTables,'display_devices'])if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)){db.exec('DELETE FROM '+table);removed=true}if(removed)db.exec('VACUUM')}finally{db.close()}}
 function copyChecked(source,destination){if(fs.lstatSync(source).isSymbolicLink())throw Error('Symboliska länkar stöds inte i säkerhetskopior.');fs.mkdirSync(path.dirname(destination),{recursive:true,mode:0o700});fs.copyFileSync(source,destination);fs.chmodSync(destination,0o600)}
 export function verifyBackup(folder){
  const manifest=JSON.parse(fs.readFileSync(path.join(folder,'manifest.json'),'utf8'));

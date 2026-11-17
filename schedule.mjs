@@ -12,9 +12,7 @@ export function createSchedule(db,sundayRules){
   try{
    for(let day=0;day<42;day++){
     const d=new Date(first);d.setDate(d.getDate()+day);const date=dateKey(d);
-    const social=sundayRules(date,'16:00','18:00','Eftermiddagspass','');
     for(const [start,end,title] of shifts){
-     if(start==='18:00'&&social.end==='20:00')continue;
      if(db.prepare('SELECT 1 FROM schedule_origins WHERE date=? AND start=?').get(date,start))continue;
      const existing=db.prepare("SELECT id FROM slots WHERE date=? AND start=? AND kind='regular' AND id NOT IN (SELECT slot_id FROM schedule_origins) ORDER BY id LIMIT 1").get(date,start);
      let id=existing?.id;
@@ -28,26 +26,19 @@ export function createSchedule(db,sundayRules){
  return {ensure};
 }
 
-// Future generated Sunday shifts become a single 16–20 shift. Keep past/custom shifts intact.
+// Split future generated 16–20 Sunday shifts once. Keep historical/custom shifts intact.
 export function upgradeSundayShifts(db,now=new Date()){
- const today=dateKey(now);
- const candidates=db.prepare("SELECT s.* FROM slots s JOIN schedule_origins o ON o.slot_id=s.id AND o.date=s.date AND o.start=s.start WHERE s.kind='regular' AND s.date>=? AND s.start='18:00' AND s.end='20:00' AND s.title='Socialiseringsgruppen' AND s.cancelled=0").all(today).filter(s=>new Date(s.date+'T12:00').getDay()===0);
- for(const evening of candidates){
-  const afternoon=db.prepare("SELECT s.* FROM slots s JOIN schedule_origins o ON o.slot_id=s.id AND o.date=s.date AND o.start=s.start WHERE s.date=? AND s.start='16:00' AND s.end='18:00' AND s.kind='regular' AND s.title IN ('Eftermiddagspass','Inställt – öppet hus')").get(evening.date);
-  if(!afternoon||(afternoon.cancelled&&afternoon.title!=='Inställt – öppet hus')||new Date(evening.date+'T16:00')<=now)continue;
-  db.exec('BEGIN IMMEDIATE');try{
-   // Preserve booking IDs except duplicate participation by the same volunteer.
-   for(const b of db.prepare('SELECT * FROM bookings WHERE slot_id=?').all(afternoon.id)){
-    if(db.prepare('SELECT id FROM bookings WHERE slot_id=? AND user_id=?').get(evening.id,b.user_id))db.prepare('DELETE FROM bookings WHERE id=?').run(b.id);
-    else db.prepare('UPDATE bookings SET slot_id=? WHERE id=?').run(evening.id,b.id);
-   }
-   if(afternoon.note&&!['Mat, städning och en stunds sällskap.','Öppet hus första söndagen i månaden. Passet 16–18 är inställt.','Öppet hus'].includes(afternoon.note)&&afternoon.note!==evening.note)db.prepare('UPDATE slots SET note=? WHERE id=?').run([evening.note,afternoon.note].filter(Boolean).join('\n'),evening.id);
-   const extra=db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='extra_info');
-   if(extra&&afternoon.extra_info)db.prepare('UPDATE slots SET extra_info=? WHERE id=?').run([evening.extra_info,afternoon.extra_info].filter(Boolean).join('\n'),evening.id);
-   db.prepare('UPDATE schedule_origins SET slot_id=? WHERE slot_id=?').run(evening.id,afternoon.id);
-   db.prepare('DELETE FROM slots WHERE id=?').run(afternoon.id);
-   db.prepare("UPDATE slots SET start='16:00',end='20:00' WHERE id=?").run(evening.id);
-   db.exec('COMMIT');
-  }catch(e){db.exec('ROLLBACK');throw e}
- }
+ db.exec('CREATE TABLE IF NOT EXISTS schedule_migrations(name TEXT PRIMARY KEY)');const migration='split-social-sunday-16-18-18-20-v1';if(db.prepare('SELECT 1 FROM schedule_migrations WHERE name=?').get(migration))return;
+ db.exec('BEGIN IMMEDIATE');try{
+  const extra=db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='extra_info');
+  const candidates=db.prepare("SELECT DISTINCT s.* FROM slots s JOIN schedule_origins o ON o.slot_id=s.id AND o.date=s.date AND o.start='16:00' WHERE s.kind='regular' AND s.date>=? AND s.start='16:00' AND s.end='20:00' AND s.title='Socialiseringsgruppen'").all(dateKey(now)).filter(s=>new Date(s.date+'T12:00').getDay()===0&&new Date(s.date+'T16:00')>now);
+  for(const slot of candidates){
+   let evening=db.prepare("SELECT s.id FROM schedule_origins o JOIN slots s ON s.id=o.slot_id WHERE o.date=? AND o.start='18:00' AND s.id<>? AND s.date=? AND s.start='18:00' AND s.end='20:00' AND s.title='Socialiseringsgruppen'").get(slot.date,slot.id,slot.date)?.id;
+   if(!evening){const fields=['date','start','end','title','capacity','note','cancelled','kind',...(extra?['extra_info']:[])],values=[slot.date,'18:00','20:00',slot.title,0,slot.note,slot.cancelled,'regular',...(extra?[slot.extra_info]:[])];evening=Number(db.prepare('INSERT INTO slots('+fields.join(',')+') VALUES('+fields.map(()=>'?').join(',')+')').run(...values).lastInsertRowid)}
+   db.prepare("UPDATE slots SET end='18:00' WHERE id=?").run(slot.id);
+   db.prepare('INSERT INTO schedule_origins(date,start,slot_id) VALUES(?,?,?) ON CONFLICT(date,start) DO UPDATE SET slot_id=excluded.slot_id').run(slot.date,'18:00',evening);
+   for(const booking of db.prepare('SELECT user_id FROM bookings WHERE slot_id=?').all(slot.id))if(!db.prepare('SELECT 1 FROM bookings WHERE user_id=? AND slot_id=?').get(booking.user_id,evening))db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(booking.user_id,evening);
+  }
+  db.prepare('INSERT INTO schedule_migrations(name) VALUES(?)').run(migration);db.exec('COMMIT');
+ }catch(error){db.exec('ROLLBACK');throw error}
 }

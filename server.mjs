@@ -64,7 +64,7 @@ if(!db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='extra_info'))
 function sundayRules(date,start,end,title,note=''){
  const day=new Date(date+'T12:00:00');
  const sunday=day.getDay()===0;
- if(sunday&&start==='16:00'&&(end==='18:00'||end==='20:00'))return {title:'Socialiseringsgruppen',note:'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.',cancelled:0,start:'16:00',end:'20:00'};
+ if(sunday&&start==='16:00'&&(end==='18:00'||end==='20:00'))return {title:'Socialiseringsgruppen',note:'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.',cancelled:0,start:'16:00',end:'18:00'};
  if(sunday&&start==='18:00'&&end==='20:00')return {title:'Socialiseringsgruppen',note:'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.',cancelled:0};
  return {title,note,cancelled:0};
 }
@@ -91,7 +91,7 @@ if(!process.env.EMPTY_SHELTER&&!db.prepare('SELECT id FROM users LIMIT 1').get()
  writeFileSync(path.join(dataDir,'lokala-konton.txt'),`Startkonton\n\nAdministratör: admin@katthem.local\nLösenord: ${admin}\n\nVolontär: alex@katthem.local\nLösenord: ${volunteer}\n\nÄndra lösenorden i appen innan verklig användning.\n`,{mode:0o600});
  const monday=new Date();monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
  const insert=db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled) VALUES(?,?,?,?,?,?,?)');
- for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']]){if(date.getDay()===0&&start==='18:00')continue;const rule=sundayRules(localDate(date),start,end,title,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');insert.run(localDate(date),rule.start||start,rule.end||end,rule.title,0,rule.note,rule.cancelled);}}
+ for(let d=0;d<42;d++){const date=new Date(monday);date.setDate(date.getDate()+d);for(const [start,end,title] of [['08:00','12:00','Morgonpass'],['16:00','18:00','Eftermiddagspass'],['18:00','20:00','Kvällspass']]){const rule=sundayRules(localDate(date),start,end,title,title==='Morgonpass'?'Mat, rent vatten och en lugn start för katterna.':'Mat, städning och en stunds sällskap.');insert.run(localDate(date),rule.start||start,rule.end||end,rule.title,0,rule.note,rule.cancelled);}}
 }
 db.prepare('UPDATE users SET created_at=? WHERE created_at=0').run(Date.now());
 // Explicit bootstrap for existing installations; never choose a person's account automatically.
@@ -264,7 +264,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/password-reset/confirm'&&req.method==='POST'){resetRateLimit(req);const p=await body(req);return send(passwordReset.reset(p?.token,p?.password))}
  if(!user)fail('Logga in för att fortsätta.',401);
  if(requiresPasswordChange(user)&&!['/api/state','/api/password','/api/logout'].includes(url.pathname))fail('Byt lösenord innan du fortsätter.',403,'PASSWORD_CHANGE_REQUIRED');
- if(url.pathname.startsWith('/api/presence'))return send(await presence.route({pathname:url.pathname,method:req.method,uid:user.id,manage:isSuperAdmin(user),admin:isAdmin(user),payload:['GET','HEAD'].includes(req.method)?undefined:await body(req),baseUrl:appOrigin||req.headers['x-portal-origin']||'http://'+req.headers.host,home:process.env.PORTAL_SHELTER_ID||'huskvarna'}));
+ if(url.pathname.startsWith('/api/presence'))return send(await presence.route({pathname:url.pathname,method:req.method,uid:user.id,manage:isSuperAdmin(user),admin:isAdmin(user),payload:['GET','HEAD'].includes(req.method)?undefined:await body(req),baseUrl:appOrigin||req.headers['x-portal-origin']||'http://'+req.headers.host,home:process.env.PORTAL_SHELTER_ID||'huskvarna',authorized:Boolean(process.env.GATEWAY_SECRET&&req.headers['x-presence-proof']===process.env.GATEWAY_SECRET)}));
  if(url.pathname==='/api/calendar/subscription'){
   if(req.method==='DELETE'){db.prepare('DELETE FROM calendar_subscriptions WHERE user_id=?').run(user.id);return send({revoked:true})}
   if(req.method==='POST'){
@@ -283,7 +283,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/profile'&&req.method==='PATCH'){
   const p=await body(req),allowed=['name','email','phone','messenger_url','birth_date','revision'];if(!p||Object.keys(p).some(k=>!allowed.includes(k))||!Number.isInteger(p.revision))fail('Endast egna kontaktuppgifter kan ändras här.');
   const profile=db.prepare('SELECT * FROM member_profiles WHERE user_id=?').get(user.id);if(!profile)fail('Profilen finns inte.',404);if(engagements.get(user.id)?.status==='purged')fail('Engagemanget har gallrats.',403);
-  if(!isAdmin(user)&&p.birth_date!==undefined&&p.birth_date!==profile.birth_date)fail('Födelsedatum ändras av admin eftersom det används för bokningsreglerna.',403);
+  if(!isAdmin(user)&&profile.birth_date&&p.birth_date!==undefined&&p.birth_date!==profile.birth_date)fail('Födelsedatum är redan registrerat. Kontakta admin om det behöver rättas.',403);
   const fields={...profile,...p,animal_care_trained:Boolean(profile.animal_care_trained),volunteer_bag:Boolean(profile.volunteer_bag)};members.save(profile.id,fields);return send(snapshot(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)));
  }
  if(url.pathname==='/api/engagement'&&req.method==='PATCH'){const p=await body(req);db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(user.id,p,{self:true});db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}return send(snapshot(user))}

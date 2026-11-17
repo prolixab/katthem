@@ -21,6 +21,14 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   // Own contact fields are editable; private administration fields are rejected server-side.
   assert.equal((await call('profile','PATCH',{phone:'0700000000',messenger_url:'https://m.me/vol-test',revision:vol.data.my_profile.revision},vol.cookie)).status,200);
   let profileState=await(await call('state','GET',null,vol.cookie)).json();assert.equal(profileState.my_profile.phone,'0700000000');
+  // A volunteer may supply a missing birth date once; subsequent corrections stay admin-only.
+  const ownBirth=await call('profile','PATCH',{birth_date:'1995-05-20',revision:profileState.my_profile.revision},vol.cookie);assert.equal(ownBirth.status,200);profileState=await ownBirth.json();assert.equal(profileState.my_profile.birth_date,'1995-05-20');
+  assert.equal((await call('profile','PATCH',{birth_date:'1996-05-20',revision:profileState.my_profile.revision},vol.cookie)).status,403);
+  assert.equal((await call('profile','PATCH',{birth_date:'',revision:profileState.my_profile.revision},vol.cookie)).status,403);
+  assert.equal((await call('profile','PATCH',{birth_date:'1995-05-20',phone:'0700000000',revision:profileState.my_profile.revision},vol.cookie)).status,200);
+  let adminBirthProfile=(await(await call('state','GET',null,sa.cookie)).json()).members.find(m=>m.user_id===3);
+  const correctedBirth=await call('members/'+adminBirthProfile.id,'PUT',{...adminBirthProfile,birth_date:'1996-05-20'},board.cookie);assert.equal(correctedBirth.status,200);adminBirthProfile=(await correctedBirth.json()).members.find(m=>m.user_id===3);assert.equal(adminBirthProfile.birth_date,'1996-05-20');
+  assert.equal((await call('members/'+adminBirthProfile.id,'PUT',{...adminBirthProfile,birth_date:''},sa.cookie)).status,200);profileState=await(await call('state','GET',null,vol.cookie)).json();
   assert.equal((await call('profile','PATCH',{role:'admin',revision:profileState.my_profile.revision},vol.cookie)).status,400);
   assert.equal((await call('profile','PATCH',{animal_care_trained:true,revision:profileState.my_profile.revision},vol.cookie)).status,400);assert.equal((await call('profile','PATCH',{volunteer_bag:true,revision:profileState.my_profile.revision},vol.cookie)).status,400);
   assert.equal((await call('profile','PATCH',{phone:'stale',revision:vol.data.my_profile.revision},vol.cookie)).status,409);
@@ -37,7 +45,12 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await call('portal/display','POST',{revision:0,show_names:false},board.cookie,b)).status,403);
   const displayMade=await call('portal/display','POST',{revision:0,show_names:false},board.cookie);assert.equal(displayMade.status,200);const displayData=await displayMade.json(),displayLink=new URL(displayData.link),displayKey=displayLink.hash.slice(1);
   assert.equal(displayLink.pathname,'/visning');assert.equal(displayLink.searchParams.get('shelter'),'huskvarna');assert.ok(!displayLink.search.includes(displayKey));
-  const displayGet=(home='huskvarna',method='GET',key=displayKey)=>fetch(base+'/api/display?shelter='+home,{method,headers:{'X-Display-Key':key}});
+  let displayCookie='';
+  async function approveDevice(key,home='huskvarna'){const request=await fetch(base+'/api/display/enroll?shelter='+home,{method:'POST',headers:{'X-Display-Key':key,'content-type':'application/json',cookie:displayCookie},body:'{}'});assert.equal(request.status,200);const cookie=request.headers.get('set-cookie');if(cookie){assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);displayCookie=cookie.split(';')[0]}const device=await request.json();assert.equal(device.token,undefined);if(!device.approved){const config=await(await call('portal/display','GET',null,sa.cookie,home)).json();const payload={revision:config.revision,device_revision:config.device_revision,pairing_code:device.pairing_code};assert.equal((await call('portal/display/device','POST',payload,board.cookie,home)).status,403);assert.equal((await call('portal/display/device','POST',payload,sa.cookie,home)).status,200)}return device}
+  const displayGet=(home='huskvarna',method='GET',key=displayKey)=>fetch(base+'/api/display?shelter='+home,{method,headers:{'X-Display-Key':key,cookie:displayCookie}});
+  const publicBefore=await displayGet();assert.equal(publicBefore.status,200);assert.equal((await publicBefore.json()).device_registered,false);
+  const securityFields={enabled:true,revision:1,device_revision:0};assert.equal((await call('portal/display/security','PUT',securityFields,board.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,vol.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,sa.cookie)).status,200);
+  assert.equal((await displayGet()).status,403);await approveDevice(displayKey);assert.equal((await fetch(base+'/api/display?shelter=huskvarna',{headers:{'X-Display-Key':displayKey}})).status,403);
   const visible=await displayGet();assert.equal(visible.status,200);assert.equal(visible.headers.get('cache-control'),'no-store');assert.equal(visible.headers.get('set-cookie'),null);const viewOnly=await visible.json();assert.equal(viewOnly.days.length,7);assert.equal(viewOnly.show_names,false);assert.equal(viewOnly.presence,null);for(const field of ['user','users','bookings','door_code','members','contacts','news','branding'])assert.equal(viewOnly[field],undefined);
   assert.equal((await fetch(base+'/api/display/confirm?shelter=huskvarna',{method:'POST',headers:{'content-type':'application/json','X-Display-Key':displayKey},body:JSON.stringify({choice:'a'.repeat(64)})})).status,403);
   assert.equal((await displayGet(b)).status,404);assert.equal((await displayGet('huskvarna','POST')).status,405);assert.equal((await displayGet('huskvarna','GET','bad')).status,404);
@@ -45,7 +58,7 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await fetch(base+'/api/bookings',{method:'POST',headers:{'X-Display-Key':displayKey,'content-type':'application/json'},body:JSON.stringify({slotId:sa.data.slots[0].id})})).status,401);
   assert.equal((await fetch(base+'/visning')).status,200);assert.equal((await fetch(base+'/visning',{method:'POST'})).status,405);assert.match((await fetch(base+'/visning')).headers.get('content-security-policy'),/frame-ancestors 'none'/);
   assert.equal((await call('portal/display','POST',{revision:0,show_names:true},board.cookie)).status,409);
-  const rotated=await(await call('portal/display','POST',{revision:1,show_names:true},board.cookie)).json();assert.equal((await displayGet()).status,404);assert.equal((await displayGet('huskvarna','GET',new URL(rotated.link).hash.slice(1))).status,200);
+  const rotated=await(await call('portal/display','POST',{revision:1,show_names:true},board.cookie)).json();assert.equal((await displayGet()).status,404);await approveDevice(new URL(rotated.link).hash.slice(1));assert.equal((await displayGet('huskvarna','GET',new URL(rotated.link).hash.slice(1))).status,200);
   assert.equal((await call('portal/display','DELETE',{revision:2},board.cookie)).status,200);assert.equal((await displayGet('huskvarna','GET',new URL(rotated.link).hash.slice(1))).status,404);
   // Optional presence module: global authorization and separate activation per shelter.
   assert.equal(vol.data.modules.presence.enabled,false);
@@ -58,25 +71,32 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await call('presence','GET',null,vol.cookie,b)).status,403);
   assert.equal((await call('presence/settings','PUT',{enabled:true,revision:0},sa.cookie,'huskvarna')).status,200);
   const qrDisplay=await(await call('portal/display','POST',{revision:3,show_names:true,allow_checkin:true},sa.cookie)).json(),qrKey=new URL(qrDisplay.link).hash.slice(1);
-  const qrScreen=await(await displayGet('huskvarna','GET',qrKey)).json();assert.equal(new URL(qrScreen.presence.link).hash,'#narvaro');assert.equal(new URL(qrScreen.presence.link).searchParams.get('shelter'),'huskvarna');assert.match(qrScreen.presence.png,/^data:image\/png;base64,/);assert.ok(!JSON.stringify(qrScreen.presence).includes(qrKey));assert.deepEqual(Object.keys(qrScreen.presence).sort(),['link','png']);
+  await approveDevice(qrKey);
+  let qrScreen=await(await displayGet('huskvarna','GET',qrKey)).json();assert.match(new URL(qrScreen.presence.link).hash,/^#narvaro\//);assert.equal(new URL(qrScreen.presence.link).searchParams.get('shelter'),'huskvarna');assert.match(qrScreen.presence.png,/^data:image\/png;base64,/);assert.ok(!JSON.stringify(qrScreen.presence).includes(qrKey));assert.deepEqual(Object.keys(qrScreen.presence).sort(),['expires_at','link','png','remaining_ms']);
   assert.equal((await fetch(base+'/api/presence/confirmations',{method:'POST',headers:{'X-Display-Key':qrKey,'content-type':'application/json'},body:JSON.stringify({kind:'spontaneous'})})).status,401);
+  for(const actor of [sa,board,vol]){const denied=await fetch(base+'/api/presence/confirmations',{method:'POST',headers:{cookie:actor.cookie,'content-type':'application/json','x-presence-proof':'fake'},body:JSON.stringify({kind:'spontaneous'})});assert.equal(denied.status,403);assert.equal((await denied.json()).code,'QR_REQUIRED')}
+  const lockedConfig=await(await call('portal/display','GET',null,sa.cookie)).json();const opened=await call('portal/display/security','PUT',{enabled:false,revision:lockedConfig.revision,device_revision:lockedConfig.device_revision},sa.cookie);assert.equal(opened.status,200);const openedConfig=await opened.json();const publicRead=await fetch(base+'/api/display?shelter=huskvarna',{headers:{'X-Display-Key':qrKey}});assert.equal(publicRead.status,200);const publicOnly=await publicRead.json();assert.equal(publicOnly.presence,null);assert.equal(publicOnly.checkin,undefined);assert.equal(publicOnly.security_enabled,false);assert.equal((await fetch(base+'/api/display/confirm?shelter=huskvarna',{method:'POST',headers:{'X-Display-Key':qrKey,'content-type':'application/json'},body:JSON.stringify({choice:'a'.repeat(64)})})).status,403);assert.equal((await call('portal/display/security','PUT',{enabled:true,revision:openedConfig.revision,device_revision:openedConfig.device_revision},sa.cookie)).status,200);qrScreen=await(await displayGet('huskvarna','GET',qrKey)).json();
   assert.ok(qrScreen.checkin);assert.equal(qrScreen.checkin.day,qrScreen.today);
   const currentSlot=sa.data.slots.find(slot=>slot.date===qrScreen.today&&!slot.cancelled);
   assert.ok(currentSlot);{const screenSeed=new DatabaseSync(path.join(dir,'katthem.sqlite'));screenSeed.prepare('INSERT OR IGNORE INTO bookings(user_id,slot_id) VALUES(?,?)').run(vol.data.user.id,currentSlot.id);screenSeed.close();
    const screen=await(await displayGet('huskvarna','GET',qrKey)).json();const pick=screen.checkin.options.find(option=>option.label==='Volontär');assert.ok(pick);assert.equal(pick.booking_id,undefined);assert.equal(pick.user_id,undefined);
-   const check=(choice,home='huskvarna',key=qrKey,extra={})=>fetch(base+'/api/display/confirm?shelter='+home,{method:'POST',headers:{'content-type':'application/json','X-Display-Key':key},body:JSON.stringify({choice,...extra})});
+   const check=(choice,home='huskvarna',key=qrKey,extra={})=>fetch(base+'/api/display/confirm?shelter='+home,{method:'POST',headers:{'content-type':'application/json','X-Display-Key':key,cookie:displayCookie},body:JSON.stringify({choice,...extra})});
    assert.equal((await check(pick.choice,b)).status,404);assert.equal((await check(pick.choice,'huskvarna',qrKey,{user_id:1})).status,400);assert.equal((await check('a'.repeat(64))).status,409);
+   assert.equal((await fetch(base+'/api/display/confirm?shelter=huskvarna',{method:'POST',headers:{'X-Display-Key':qrKey,'content-type':'application/json'},body:JSON.stringify({choice:pick.choice})})).status,403);
    const before=await(await call('state','GET',null,vol.cookie)).json();assert.equal((await check(pick.choice)).status,200);assert.equal((await check(pick.choice)).status,200);
    const after=await(await call('state','GET',null,vol.cookie)).json();assert.equal(after.modules.presence.mine.filter(row=>row.kind==='booked').length,1);assert.deepEqual(after.bookings,before.bookings);assert.deepEqual(after.user,{...before.user,last_presence_day:screen.today});
    const own=after.bookings.find(row=>row.slot_id===currentSlot.id);assert.equal((await call('bookings/'+own.id,'DELETE',null,sa.cookie)).status,200);assert.equal((await check(pick.choice)).status,409);
   }
   assert.equal((await fetch(base+'/api/_screen/booked',{method:'POST',headers:{cookie:sa.cookie,'content-type':'application/json'},body:JSON.stringify({booking_id:1})})).status,404);
-  assert.equal((await call('portal/display','DELETE',{revision:4},sa.cookie)).status,200);
+  assert.equal((await call('presence/confirmations','POST',{kind:'spontaneous'},vol.cookie)).status,403);
+  const scan=await call('presence/access','POST',{token:new URL(qrScreen.presence.link).hash.slice(9)},vol.cookie);assert.equal(scan.status,200,await scan.clone().text());
+  assert.equal((await call('presence/access','POST',{token:'forged'},vol.cookie)).status,403);assert.equal((await call('presence/access','POST',{token:new URL(qrScreen.presence.link).hash.slice(9)},board.cookie)).status,200);
   const unchanged=await(await call('state','GET',null,vol.cookie)).json();
   const confirmation=await call('presence/confirmations','POST',{kind:'spontaneous'},vol.cookie);assert.equal(confirmation.status,200);assert.equal((await confirmation.json()).mine.length,1);
   const afterPresence=await(await call('state','GET',null,vol.cookie)).json();assert.deepEqual(afterPresence.user,unchanged.user);assert.deepEqual(afterPresence.bookings,unchanged.bookings);
   assert.equal((await call('presence/qr','GET',null,vol.cookie)).status,403);
-  assert.equal((await call('presence/qr','GET',null,board.cookie)).status,200);
+  assert.equal((await call('presence/qr','GET',null,board.cookie)).status,403);
+  assert.equal((await call('portal/display','DELETE',{revision:4},sa.cookie)).status,200);assert.equal((await call('presence/confirmations','POST',{kind:'spontaneous'},vol.cookie)).status,403);
   assert.equal((await call('presence/settings','PUT',{enabled:false,revision:1},sa.cookie)).status,200);
   assert.equal((await call('presence/settings','PUT',{enabled:false,revision:1},sa.cookie,b)).status,200);
   const weekStart=sa.data.slots[0].date,rangeQuery='schedule?start='+weekStart+'&end='+weekStart;

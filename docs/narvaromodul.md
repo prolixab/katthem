@@ -1,26 +1,23 @@
 # Närvarobekräftelse – valbar modul
 
-## Påkoppling
+Modulen är avstängd från början per katthem. SA kan aktivera eller deaktivera den under Administration → Moduler – närvarobekräftelse. Avstängning rensar dagens bekräftelser och profilernas senaste bekräftelsedatum samt spärrar QR och mobilbehörigheter.
 
-1. Driftsätt versionen; modulen är fortfarande avstängd.
-2. Logga in som systemets superadmin och välj katthem.
-3. Administration → Moduler – närvarobekräftelse → Aktivera → Spara modulinställning.
-4. Hämta QR-skylten från den publicerade portalen.
+## Visningsdator
+Skapa en visningslänk under Administration → Visningsskärm för schemat. Öppna den på katthemmets dator och låt SA godkänna registreringskoden som visas där. Koden gäller tio minuter; endast en webbläsare per katthem kan vara godkänd. SA kan aktivera läslås för publikt schema per katthem; det är avstängt från början. Utan läslås fungerar befintliga länkar för läsning. QR och incheckning kräver ändå registrering; välj Registrera för incheckning på visningssidan. Med läslås visas registreringskoden direkt. SA kan återkalla/ersätta enheten. Webbläsarnyckeln ligger i en HttpOnly/Secure/SameSite=Strict-cookie i produktion och endast dess hash lagras. Länkrotation återkallar enheter. Rensad lagring kräver ny registrering. Enhetsgodkännanden ingår inte i säkerhetskopior.
 
-Avstängning tar bort dagens bekräftelser och döljer modulen för volontärer. Aktivering styrs separat per databas/katthem, inte genom ett namn eller ett frivilligt klientvärde.
+## Incheckning
+Den godkända skärmen visar en QR som byts varje minut och upphör vid nästa minutgräns. Efter inloggning kan en giltig kod växlas mot fem minuters bekräftelserätt för den inloggade sessionen och samma katthem. Om koden hinner gå ut under inloggningen behöver volontären skanna igen. Mina bokningar visar närvarodelen; direkta incheckningsanrop utan giltig bekräftelserätt nekas. Egna feltryck kan ångras utan ny kod. Namnval för dagens bokade pass går bara från den godkända skärmen och kräver separat aktivering. Spontana insatser går via QR och personlig inloggning.
 
-## Stabilt modulgränssnitt
+- PUT /api/presence/settings: aktivering och revisionsnummer; endast SA.
+- GET /api/presence: dagens positiva uppgifter, egna bekräftelser och giltighet för sessionens bekräftelserätt.
+- POST /api/presence/access: signerad aktuell QR-token; skapar en kortlivad sessionsbunden rätt.
+- POST /api/presence/confirmations: eget bokat pass idag eller spontan insats; serververifierad rätt krävs.
+- DELETE /api/presence/confirmations/:id: ångra egen bekräftelse idag.
+- GET /api/presence/qr: ger inte längre en statisk eller utskrivbar kod.
+- POST /api/display/enroll: registrera webbläsare som väntar på godkännande.
+- POST/DELETE /api/portal/display/device: godkänn med kod eller återkalla; endast SA och revisionskontroll.
 
-Manifestet presenceModule beskriver id, version, standardaktivering och transientTables. createPresence tar emot en databas, injicerbar klocka och behörighetskontroll. Inställning, domänoperationer, snapshot och HTTP-adapter ligger i modulen. Klientvyn och QR-landningen ligger i public/presence.js. Core anropar bara modulens API och inkluderar snapshot i state.
+Domänreglerna validerar bokningens ägare, datum, status och engagemang. Gateway verifierar enhet, token och sessionsrätt; katthemsprocessen kräver en intern betrodd markering för mobila bekräftelser. Privata skärmrutten går inte att anropa från det publika gränssnittet.
 
-- PUT /api/presence/settings: enabled och revisionsnummer; endast superadmin.
-- GET /api/presence: dagens positiva uppgifter och egna val.
-- POST /api/presence/confirmations: kind=booked och eget booking_id, eller kind=spontaneous.
-- DELETE /api/presence/confirmations/:id: ångra en egen bekräftelse idag.
-- GET /api/presence/qr: QR-bild och länk; endast admin när modulen är på.
-
-Avstängda domänanrop returnerar MODULE_DISABLED. Servern validerar bokningens ägare, datum, status och användarens engagemang. Unika index gör dubbeltryck idempotenta. Inställning och skrivning skyddas med SQLite-transaktioner. Inga datum eller klockslag accepteras från klienten.
-
-## Integritetsgränser vid utbyggnad
-
-Behåll positiv, frivillig dagsbekräftelse. Lägg inte till frånvarolistor, förklaringskrav, individuell historik, positionering, tidsmätning eller koppling till behörighet/statistik utan ett nytt uttryckligt beslut. Tabeller med bekräftelser tas bort ur kopior före hash och verifiering, medan inställningar bevaras. Använd inte adminloggen för bekräftelser. QR-koden är en vanlig delbar länk, ingen platskontroll.
+## Integritet och begränsningar
+Bekräftelsen är frivillig samordning, inte arbetstidskontroll. Inga frånvarolistor, individuella historiklistor, ankomstklockslag eller positionskontroller. Senaste bekräftelsedatumet sparas privat utan klockslag. Dagens bekräftelser rensas vid dagsbyte och alla närvarouppgifter stryks ur backuper. Skanningar och personers bekräftelser hamnar inte i adminloggen. QR och mobilrättigheter är kortlivade; modulavstängning, återkallad enhet/länk och omstart spärrar dem. Skyddet hindrar inte att någon vidarebefordrar en giltig kod direkt eller kopierar en hel webbläsarprofil.

@@ -314,7 +314,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
   const social=(await response.json()).slots.find(x=>x.date===date&&x.start==='18:00');assert.equal(social.title,'Socialiseringsgruppen');assert.match(social.note,/socialiseringsträning/);assert.equal(social.minimum_staff,2);
  }
  const seeded=(await(await call('state','GET',null,ac)).json()).slots.filter(x=>x.date!==firstSunday&&x.date!==laterSunday&&x.title!=='Testpass');
- for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='16:00'){assert.equal(item.title,'Socialiseringsgruppen');assert.equal(item.end,'20:00');assert.equal(item.cancelled,0)}assert.notEqual(item.start,'18:00')}}
+ for(const item of seeded){if(new Date(item.date+'T12:00').getDay()===0){if(item.start==='16:00'){assert.equal(item.title,'Socialiseringsgruppen');assert.equal(item.end,'18:00');assert.equal(item.cancelled,0)}if(item.start==='18:00'){assert.equal(item.title,'Socialiseringsgruppen');assert.equal(item.end,'20:00');assert.equal(item.cancelled,0)}}}
  // Recurring booking API only allows booking for self unless actor is admin.
  const seriesPayload={date:'2098-06-03',start:'06:00',end:'07:00',title:'Serietest',kind:'regular'};
  const seriesFirst=(await(await call('slots','POST',seriesPayload,ac)).json()).slots.find(s=>s.title==='Serietest');

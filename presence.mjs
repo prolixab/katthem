@@ -1,4 +1,4 @@
-export const presenceModule=Object.freeze({id:'presence',version:2,title:'Närvarobekräftelse',defaultEnabled:false,transientTables:Object.freeze(['presence_confirmations','presence_last'])});
+export const presenceModule=Object.freeze({id:'presence',version:3,title:'Närvarobekräftelse',defaultEnabled:false,transientTables:Object.freeze(['presence_confirmations','presence_last'])});
 export function createPresence(db,{now=()=>new Date(),canConfirm=uid=>Boolean(db.prepare('SELECT active FROM users WHERE id=?').get(uid)?.active)}={}){
  const fail=(message,status=400,code)=>{throw Object.assign(Error(message),{status,code})};
  const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Stockholm',year:'numeric',month:'2-digit',day:'2-digit'}).format(now());
@@ -34,13 +34,13 @@ export function createPresence(db,{now=()=>new Date(),canConfirm=uid=>Boolean(db
  }
  function retract(uid,id){db.exec('BEGIN IMMEDIATE');try{requireEnabled();purge();const day=today(),result=db.prepare('DELETE FROM presence_confirmations WHERE id=? AND user_id=? AND day=?').run(id,uid,day);if(!result.changes)fail('Din bekräftelse finns inte längre.',404);if(!db.prepare('SELECT 1 FROM presence_confirmations WHERE user_id=? AND day=?').get(uid,day))db.prepare('DELETE FROM presence_last WHERE user_id=? AND day=?').run(uid,day);db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}}
  function last(uid){return settings().enabled?db.prepare('SELECT day FROM presence_last WHERE user_id=?').get(uid)?.day||null:null}
- async function route({pathname,method,uid,manage=false,admin=false,payload,baseUrl,home='huskvarna'}){
+ async function route({pathname,method,uid,manage=false,admin=false,payload,baseUrl,home='huskvarna',authorized=false}){
   if(pathname==='/api/presence/settings'&&method==='PUT'){if(!manage)fail('Endast superadmin kan koppla på modulen.',403);configure(payload);return snapshot(uid,{manage})}
   requireEnabled();
   if(pathname==='/api/presence'&&method==='GET')return snapshot(uid,{manage});
-  if(pathname==='/api/presence/confirmations'&&method==='POST'){confirm(uid,payload);return snapshot(uid,{manage})}
+  if(pathname==='/api/presence/confirmations'&&method==='POST'){if(!authorized)fail('Skanna den aktuella QR-koden på katthemmets skärm.',403,'QR_REQUIRED');confirm(uid,payload);return snapshot(uid,{manage})}
   const remove=pathname.match(/^\/api\/presence\/confirmations\/(\d+)$/);if(remove&&method==='DELETE'){retract(uid,Number(remove[1]));return snapshot(uid,{manage})}
-  if(pathname==='/api/presence/qr'&&method==='GET'){if(!admin)fail('Endast administratörer kan hämta QR-skylten.',403);const link=new URL('/',baseUrl);link.searchParams.set('shelter',home);link.hash='narvaro';const {default:QR}=await import('qrcode');return {link:link.href,png:await QR.toDataURL(link.href,{width:512,margin:4,errorCorrectionLevel:'M'})}}
+  if(pathname==='/api/presence/qr'&&method==='GET')fail('QR-koden visas bara på en godkänd visningsskärm och byts varje minut.',403,'QR_ON_SCREEN');
   fail('Funktionen finns inte.',404);
  }
  return {settings,configure,snapshot,confirm,retract,last,purge,route};

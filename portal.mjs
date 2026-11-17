@@ -1,4 +1,4 @@
-import {createScheduleDisplay,displaySchedule,displayNames} from './display.mjs';
+import {createScheduleDisplay,displaySchedule,displayNames,createPresenceTickets,createPresenceGrants} from './display.mjs';
 import {readFileSync,createReadStream,statSync} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
 import {calendarEvents} from './calendar.mjs';
@@ -106,6 +106,13 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   return rows.filter(row=>!labels.get(row.user_id).ambiguous).map(row=>({booking_id:row.id,pass_key:displayPassKey(home,key,today,row.slot_id),choice:createHmac('sha256',secret).update(JSON.stringify([home,key,today,row.id])).digest('hex'),label:labels.get(row.user_id).label,title:row.title,start:row.start,end:row.end}));
  }
  const displays=createScheduleDisplay(registry),displayQrCache=new Map();
+ const tickets=createPresenceTickets({secret,validBinding:displays.validBinding}),presenceGrants=createPresenceGrants({tickets,validBinding:displays.validBinding});
+ const deviceCookieName=home=>(env.NODE_ENV==='production'?'__Host-':'')+'display_device_'+home;
+ const deviceToken=(req,home)=>(req.headers.cookie||'').split(';').map(value=>value.trim()).find(value=>value.startsWith(deviceCookieName(home)+'='))?.slice(deviceCookieName(home).length+1);
+ const deviceConfig=(req,home,key)=>displays.authorizeDevice(home,key,deviceToken(req,home));
+ async function grantStatus(p,home){const w=await worker(home),config=w.db.prepare('SELECT enabled,revision FROM presence_settings WHERE id=1').get();return presenceGrants.expires(p.token,home,config)}
+ function limitRate(key,max){let value=rates.get(key);if(!value||value.until<Date.now()){value={count:0,until:Date.now()+60000};rates.set(key,value)}if(++value.count>max)fail('För många försök. Vänta en minut.',429)}
+
  const publicList=()=>({shelters:houses(),default_shelter:primary});
  async function bytes(req){const chunks=[];let size=0;for await(const b of req){size+=b.length;if(size>600000)fail('För stor begäran.',413);chunks.push(b)}return Buffer.concat(chunks)}
  function json(bytes){try{return JSON.parse(bytes.toString()||'{}')}catch{fail('Ogiltiga uppgifter.')}}
@@ -125,20 +132,25 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     if(req.method!=='GET')fail('Endast läsning är tillåten.',405);const file=displayFiles[url.pathname];
     res.writeHead(200,{'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"});return res.end(readFileSync(path.join(root,'public',file)));
    }
+   if(url.pathname==='/api/display/enroll'){
+    if(req.method!=='POST')fail('Metoden stöds inte.',405);const home=url.searchParams.get('shelter'),key=req.headers['x-display-key'];if(!house(home))fail('Katthemmet finns inte.',404);limitRate('device-enroll:'+req.socket.remoteAddress,20);const fields=json(await bytes(req));if(!fields||typeof fields!=='object'||Array.isArray(fields)||Object.keys(fields).length)fail('Registreringen tar inga extra uppgifter.');const {token,...result}=displays.enroll(home,key,deviceToken(req,home));if(token)res.setHeader('Set-Cookie',deviceCookieName(home)+'='+token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000'+(env.NODE_ENV==='production'?'; Secure':''));return send(result);
+   }
    if(url.pathname==='/api/_screen/booked')fail('Funktionen finns inte.',404);
    if(url.pathname==='/api/display/confirm'){
     if(req.method!=='POST')fail('Metoden stöds inte.',405);
-    const home=url.searchParams.get('shelter'),key=req.headers['x-display-key'],config=displays.authorize(home,key);
+    const home=url.searchParams.get('shelter'),key=req.headers['x-display-key'],config=deviceConfig(req,home,key);
     if(!config.allow_checkin)fail('Bekräftelse från skärmen är inte aktiverad.',403);
     const w=await worker(home);if(!w.db.prepare('SELECT enabled FROM presence_settings WHERE id=1').get()?.enabled)fail('Närvarobekräftelsen är avstängd.',403);
     let rate=rates.get('display:'+home);if(!rate||rate.until<Date.now()){rate={count:0,until:Date.now()+60000};rates.set('display:'+home,rate)}if(++rate.count>120)fail('Många bekräftelser just nu. Försök igen om en minut.',429);const fields=json(await bytes(req));if(!fields||Object.keys(fields).some(k=>k!=='choice')||typeof fields.choice!=='string'||! /^[a-f0-9]{64}$/.test(fields.choice))fail('Välj ditt namn och pass i dagens lista.');
-    if(!displays.authorize(home,key).allow_checkin)fail('Bekräftelse från skärmen är inte aktiverad.',403);const chosen=displayChoices(w.db,home,key).find(row=>row.choice===fields.choice);if(!chosen)fail('Listan har ändrats. Öppna dagens lista igen.',409);
+    if(!deviceConfig(req,home,key).allow_checkin)fail('Bekräftelse från skärmen är inte aktiverad.',403);const chosen=displayChoices(w.db,home,key).find(row=>row.choice===fields.choice);if(!chosen)fail('Listan har ändrats. Öppna dagens lista igen.',409);
     const result=await fetch(w.address+'/api/_screen/booked',{method:'POST',headers:{'x-portal-secret':secret,'content-type':'application/json'},body:JSON.stringify({booking_id:chosen.booking_id})}),response=await result.json();return send(response,result.status);
    }
    if(url.pathname==='/api/display'){
-    if(req.method!=='GET')fail('Endast läsning är tillåten.',405);const home=url.searchParams.get('shelter'),config=displays.authorize(home,req.headers['x-display-key']);if(!house(home))fail('Visningslänken är ogiltig eller återkallad.',404);
-    res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow, noarchive');const w=await worker(home),data=displaySchedule(w.db,{name:house(home).name,...config,...(config.allow_checkin?{slotKey:(id,day)=>displayPassKey(home,req.headers['x-display-key'],day,id)}:{})});data.presence=null;
-    if(w.db.prepare('SELECT enabled FROM presence_settings WHERE id=1').get()?.enabled){const link=new URL('/',origin);link.searchParams.set('shelter',home);link.hash='narvaro';let png=displayQrCache.get(link.href);if(!png){const {default:QR}=await import('qrcode');png=await QR.toDataURL(link.href,{width:384,margin:4,errorCorrectionLevel:'M'});displayQrCache.set(link.href,png)}data.presence={link:link.href,png};if(config.allow_checkin)data.checkin={day:data.today,options:displayChoices(w.db,home,req.headers['x-display-key']).map(({booking_id,...option})=>option)};}return send(data);
+    if(req.method!=='GET')fail('Endast läsning är tillåten.',405);const home=url.searchParams.get('shelter'),config=displays.authorizeRead(home,req.headers['x-display-key'],deviceToken(req,home));if(!house(home))fail('Visningslänken är ogiltig eller återkallad.',404);
+    res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow, noarchive');const w=await worker(home),data=displaySchedule(w.db,{name:house(home).name,...config,...(config.allow_checkin?{slotKey:(id,day)=>displayPassKey(home,req.headers['x-display-key'],day,id)}:{})});data.presence=null;data.security_enabled=config.security_enabled;data.device_registered=Boolean(config.device_hash);
+    const module=w.db.prepare('SELECT enabled,revision FROM presence_settings WHERE id=1').get();
+    if(module?.enabled&&config.device_hash){const ticket=tickets.issue(home,config.device_hash,config.device_revision,module.revision),link=new URL('/',origin);link.searchParams.set('shelter',home);link.hash='narvaro/'+ticket.token;const cacheKey=home+':'+ticket.token;for(const [id,value] of displayQrCache)if(value.expires_at<=Date.now())displayQrCache.delete(id);let cached=displayQrCache.get(cacheKey);if(!cached){const {default:QR}=await import('qrcode');cached={png:await QR.toDataURL(link.href,{width:384,margin:4,errorCorrectionLevel:'M'}),expires_at:ticket.expires_at};displayQrCache.set(cacheKey,cached)}data.presence={link:link.href,png:cached.png,expires_at:ticket.expires_at,remaining_ms:Math.max(0,ticket.expires_at-Date.now())};if(config.allow_checkin)data.checkin={day:data.today,options:displayChoices(w.db,home,req.headers['x-display-key']).map(({booking_id,...option})=>option)};}
+    return send(data);
    }
    const incomingToken=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('portal_session='))?.slice(15);
    let p=await principal(incomingToken),target=p?.selected||primary,token='';if(p&&!access(p,target)){target=houses().find(h=>access(p,h.id))?.id||target;registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(target,incomingToken);}let payload=write?await bytes(req):null;
@@ -148,6 +160,15 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(p&&requiresPasswordChange(p.user)&&url.pathname.startsWith('/api/')){
     if(url.pathname==='/api/state'&&req.method==='GET')return send({password_change_required:true,user:{id:p.user.id,name:p.user.name,email:p.user.email,role:p.user.role,must_change_password:true},branding:createBranding((await worker(p.source)).db).get()});
     if(!['/api/password','/api/logout'].includes(url.pathname))return send({error:'Byt lösenord innan du fortsätter.',code:'PASSWORD_CHANGE_REQUIRED'},403);
+   }
+   if(url.pathname==='/api/portal/display/security'){
+    if(!p?.global)fail('Endast superadmin kan ändra säkerheten för det publika schemat.',403);if(req.method!=='PUT')fail('Metoden stöds inte.',405);const result=displays.security(target,json(payload));audit.record({home:target,actor:p,action:result.security_enabled?'display.security.enabled':'display.security.disabled',details:{}});return send(result);
+   }
+   if(url.pathname==='/api/portal/display/device'){
+    if(!p?.global)fail('Endast superadmin kan godkänna eller återkalla en visningsdator.',403);if(!['POST','DELETE'].includes(req.method))fail('Metoden stöds inte.',405);limitRate('device-approve:'+p.source+':'+p.user_id,20);const result=displays.bind(target,json(payload),req.method==='DELETE');audit.record({home:target,actor:p,action:req.method==='POST'?'display.device.approved':'display.device.revoked',details:{}});return send(result);
+   }
+   if(url.pathname==='/api/presence/access'){
+    if(!p)fail('Logga in för att fortsätta.',401);if(!access(p,target))fail('Du saknar åtkomst till katthemmet.',403);if(req.method!=='POST')fail('Metoden stöds inte.',405);limitRate('presence-access:'+p.token,30);const fields=json(payload);if(!fields||Object.keys(fields).some(k=>k!=='token'))fail('Skanna QR-koden på skärmen.',403);const w=await worker(target),module=w.db.prepare('SELECT enabled,revision FROM presence_settings WHERE id=1').get();if(!module?.enabled)fail('Närvaromodulen är avstängd.',404);const expires_at=presenceGrants.grant(p.token,target,fields.token,module);return send({expires_at});
    }
    if(url.pathname==='/api/portal/display'){
     if(!p||!['admin','superadmin'].includes(access(p,target)))fail('Endast admin i detta katthem kan hantera visningslänken.',403);
@@ -252,7 +273,8 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     }
    }else target=primary;
    if(p&&access(p,target))await syncGrantedProfiles(target);
-   const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
+   let presenceProof=false;if(url.pathname==='/api/presence/confirmations'&&req.method==='POST'){if(!p||!await grantStatus(p,target))return send({error:'Skanna den aktuella QR-koden på katthemmets skärm innan du bekräftar närvaro.',code:'QR_REQUIRED'},403);presenceProof=true}
+   const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(presenceProof)headers['x-presence-proof']=secret;if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
    const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
    if(result.ok&&write&&p&&['admin','superadmin'].includes(access(p,target))){const event=audit.fromRequest(url.pathname,req.method,payload?json(payload):{});if(event)audit.record({home:target,actor:p,...event})}
    if(result.ok&&write&&/^\/api\/(users|volunteers|members|profile)(\/|$)/.test(url.pathname))await reconcile();
@@ -261,9 +283,9 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,data.user.id)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
     const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);if(data.password_change_required){res.setHeader('Set-Cookie',cookie(newToken));return send(data)}if(!access(p,target)){const next=houses().find(h=>access(p,h.id));if(!next)fail('Engagemanget har avslutats och personuppgifterna har gallrats.',401);registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(next.id,newToken);res.setHeader('Set-Cookie',cookie(newToken));return send({redirect_home:true})}res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;return send(await displayContactEmails(data,target));
    }
-   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(await displayContactEmails(data,target),result.status)}
+   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.enabled!==undefined&&url.pathname.startsWith('/api/presence'))data.access_expires_at=await grantStatus(p,target);if(data.modules?.presence)data.modules.presence.access_expires_at=await grantStatus(p,target);if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(await displayContactEmails(data,target),result.status)}
    for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
-  }catch(e){if(res.headersSent){res.destroy();return}if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.'},e.status||503)}finally{if(tracked)activeRequests--}
+  }catch(e){if(res.headersSent){res.destroy();return}if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.',...(e.code?{code:e.code}:{})},e.status||503)}finally{if(tracked)activeRequests--}
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve)});
  const startupBackup=setTimeout(()=>{void maybeBackup()},1000);startupBackup.unref();
