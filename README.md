@@ -546,3 +546,9 @@ Portalens ursprungliga gröna färger behålls som grundstandard. Egna färger o
 Djurens Vänners blå profil använder **RGB 1, 42, 94 / #012A5E**, ljus bakgrund och vita ytor. Admin eller superadmin kan välja **Administration → Grafisk profil → Djurens Vänner – blå profil**, förhandsgranska och spara. Profilvalet behåller uppladdad logotyp och gäller bara valt katthem. **Återställ grön grundstandard** återställer ursprungliga färger och standardlogotyp. Huskvarnas befintliga sparade blå huvudfärg fungerar även utan att en ny profil väljs.
 
 Huvudfärgen används på knappar, rubriker, menyval och länkar. Röda bemanningsvarningar och gröna statusmarkeringar är oberoende av profilfärgen. Ett eget underbemannat pass har röd bakgrund och separat grön text för den egna bokningen; vanliga egna bokningar har ljusgrön bakgrund. Visningsskärmen behåller sin befintliga profil och får rubriken Incheckning ovanför QR-koden. Incheckningens säkerhetsregler och möjlighet till avstängning är oförändrade.
+
+## Menykolumn och portalnamn – version 0.6.037
+
+Menykolumnen är 270 px på större skärmar och 255 px i smalare datorfönster. Tassportalen hålls på en rad vid logotypen. På mobil används fortsatt hopfällbar meny och mindre logotyp; på de smalaste skärmarna anpassas även namnets textstorlek. Manualerna är uppdaterade.
+
+Logotypens motiv visas i en fast yta vid byte av katthem: 62 × 62 px på dator och 36 × 36 px på mobil. Vita och transparenta yttermarginaler i olika bildfiler jämnas ut för visningen, utan att originalfilerna ändras. Bildens proportioner och hela motivet bevaras.
