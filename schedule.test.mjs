@@ -36,7 +36,7 @@ test('Bakgrundsuppdatering: väntar vid inmatning och hoppar över andra sidor',
  }
 });
 test('Bakgrundsuppdatering: kastar svar efter byte av vecka, hem, vy eller påbörjad redigering',async()=>{
- for(const change of [c=>c.offset++,c=>c.state.portal.selected='b',c=>c.view='info',c=>c.document.activeElement={tagName:'TEXTAREA'},c=>c.modal.open=true,c=>c.mutationVersion++]){
+ for(const change of [c=>c.offset++,c=>c.state.portal.selected='b',c=>c.view='info',c=>vm.runInContext("calendarMode='list'",c),c=>c.document.activeElement={tagName:'TEXTAREA'},c=>c.modal.open=true,c=>c.mutationVersion++]){
   const h=harness(),before=h.context.state,pending=vm.runInContext('refreshSchedule()',h.context);change(h.context);h.complete();await pending;assert.equal(h.context.state,before);assert.equal(h.calls.length,1);assert.equal(h.focus.length,0);
  }
 });
@@ -56,7 +56,7 @@ test('Navigation: Veckoschema fokuserar passen, loggan återställer startsidan'
  const source=appSource.slice(appSource.indexOf('function navigateSchedule('),appSource.indexOf('function render(){')),calls=[],heading={focus:o=>calls.push(['focus',o]),scrollIntoView:o=>calls.push(['scroll',o])};
  const context=vm.createContext({view:'admin',offset:3,filter:'mine',scheduleDay:'2030-01-01',mobileWeek:true,adminSectionsOpen:new Set(['booking-settings']),render:()=>calls.push(['render']),$:selector=>{calls.push(['heading',selector]);return heading},window:{scrollTo:o=>calls.push(['top',o])}});
  vm.runInContext(source+';navigateSchedule()',context);assert.equal(context.view,'schedule');assert.equal(context.offset,3);assert.equal(context.filter,'mine');assert.equal(context.adminSectionsOpen.size,0);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#schedule-heading'));assert.ok(calls.some(c=>c[0]==='scroll'));assert.ok(!calls.some(c=>c[0]==='top'));
- calls.length=0;vm.runInContext('navigateSchedule(true)',context);assert.equal(context.offset,0);assert.equal(context.filter,'all');assert.equal(context.scheduleDay,'');assert.equal(context.mobileWeek,false);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#home-heading'));assert.ok(calls.some(c=>c[0]==='top'&&c[1].top===0));
+ calls.length=0;vm.runInContext('navigateSchedule(true)',context);assert.equal(context.view,'home');assert.equal(context.calendarMode,'week');assert.equal(context.offset,0);assert.equal(context.filter,'all');assert.equal(context.scheduleDay,'');assert.equal(context.mobileWeek,false);assert.ok(calls.some(c=>c[0]==='heading'&&c[1]==='#home-heading'));assert.ok(calls.some(c=>c[0]==='top'&&c[1].top===0));
 });
 
 test('Startsidenotiser: väntande checklistor visas för admin och försvinner efter godkännande',()=>{
@@ -64,4 +64,20 @@ test('Startsidenotiser: väntande checklistor visas för admin och försvinner e
  const context=vm.createContext({state:{user:{role:'admin'},introduction_pending:[{id:2,name:'Ny volontär',routine_current:true}]},isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s)});
  const markup=vm.runInContext(source+';introductionPendingPanel()',context);assert.ok(markup.includes('Väntar på godkännande (1)'));assert.match(markup,/Ny volontär/);assert.match(markup,/data-review-introduction="2"/);
  context.state.user.role='volunteer';assert.equal(vm.runInContext('introductionPendingPanel()',context),'');context.state.user.role='admin';context.state.introduction_pending=[];assert.equal(vm.runInContext('introductionPendingPanel()',context),'');
+});
+
+test('Ny layout: nästa egna aktiva pass, filtrerad lista och skyddade deltagarnamn',()=>{
+ const days=Array.from({length:7},(_,i)=>'2099-01-'+String(i+1).padStart(2,'0')),slots=[{id:1,date:days[0],start:'08:00',end:'12:00',title:'Inställt',mine:1,cancelled:1},{id:2,date:days[2],start:'16:00',end:'18:00',title:'Nästa <pass>',mine:1,booked:1,minimum_staff:2,green_booked:1},{id:3,date:days[1],start:'08:00',end:'12:00',title:'Ledigt',mine:0,booked:0,minimum_staff:2,green_booked:0}];
+ const context=vm.createContext({state:{user:{name:'Anna <test>',role:'volunteer'},slots,bookings:[{slot_id:2,name:'Privat deltagarnamn'}]},isAdmin:u=>u.role==='admin',esc:s=>String(s??'').replace(/</g,'&lt;').replace(/>/g,'&gt;'),past:()=>false,needsStaffing:s=>!s.cancelled&&s.booked<2,staffed:s=>s.booked>=2,staffing:s=>s.booked+' anmälda',experienceLabel:s=>s.green_booked?'✓ Grönmarkerad volontär bokad':'Saknar grönmarkerad volontär',fmt:s=>s,dateStr:()=>days[0],week:()=>days,weekNumber:()=>1,filter:'all',recommendedLimit:()=>5,bookingHelpPanel:()=>'',routineReminder:()=>'',weekCalendarLink:()=>'',newsBanner:()=>'',doorCodePanel:()=>'',introductionPendingPanel:()=>'',upcomingReminders:()=>''});
+ vm.runInContext(scheduleSource,context);
+ const home=vm.runInContext('homePage()',context);assert.match(home,/data-slot="2">Hantera pass/);assert.doesNotMatch(home,/Inställt|Privat deltagarnamn/);assert.match(home,/Nästa &lt;pass&gt;/);
+ let calendar=vm.runInContext("calendarMode='list';schedulePage()",context);assert.equal((calendar.match(/data-day-date=/g)||[]).length,7);assert.match(calendar,/calendar-list/);assert.match(calendar,/data-slot="2"[^>]*>Hantera pass/);assert.match(calendar,/data-slot="3"[^>]*>Boka pass/);assert.doesNotMatch(calendar,/Privat deltagarnamn|data-self-book/);assert.match(calendar,/slot [^"]*booked[^"]*understaffed/);assert.match(calendar,/✓ Grönmarkerad volontär bokad/);
+ calendar=vm.runInContext("filter='mine';schedulePage()",context);assert.doesNotMatch(calendar,/data-slot="3"/);assert.match(calendar,/data-slot="2"/);
+ context.state.user.role='admin';assert.match(vm.runInContext('schedulePage()',context),/Privat deltagarnamn/);
+});
+
+
+test('Veckans passerade pass visas och öppnas för läsning utan ny bokningsknapp',()=>{
+ const source=scheduleSource.slice(scheduleSource.indexOf('function scheduleSlot('),scheduleSource.indexOf('function schedulePage(')),context=vm.createContext({past:()=>true,needsStaffing:()=>false,esc:s=>String(s??''),staffing:()=> '2 anmälda',state:{bookings:[]},s:{id:4,start:'08:00',end:'12:00',title:'Tidigare morgonpass',mine:0,cancelled:0}});
+ const html=vm.runInContext(source+';scheduleSlot(s,false)',context);assert.match(html,/past-label">Passerat/);assert.match(html,/data-slot="4"[^>]*>Visa pass/);assert.doesNotMatch(html,/disabled|Boka pass|data-self-book/);
 });

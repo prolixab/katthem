@@ -476,9 +476,9 @@ const server=http.createServer(async(req,res)=>{
  }
  fail('Sidan finns inte.',404);
  }
- const files={'/':'index.html','/app.js':'app.js','/schedule-view.js':'schedule-view.js','/presence.js':'presence.js','/style.css':'style.css'};const file=files[url.pathname];if(!file){res.writeHead(404);return res.end('Not found')}
- res.setHeader('Cache-Control','no-store');
- res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
+ const files={'/':'index.html','/app.js':'app.js','/schedule-view.js':'schedule-view.js','/presence.js':'presence.js','/style.css':'style.css','/portal-cat.png':'portal-cat.png'};const file=files[url.pathname];if(!file){res.writeHead(404);return res.end('Not found')}
+ res.setHeader('Cache-Control',file==='portal-cat.png'?'public, max-age=86400':'no-store');
+ res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.png')?'image/png':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.',code:e.status?e.code:undefined},e.status||500)}
 });
 async function maintenance(){presence.purge();schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run()])}

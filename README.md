@@ -203,7 +203,7 @@ Admin och superadmin använder samma Bekräfta bokning och Avboka pass som volon
 
 På kalenderkortet kan admin och superadmin också bekräfta egen bokning direkt under Hantera pass. Knappen visas bara på framtida, ej inställda pass där personen inte redan är bokad. Samma kontroller för bemanning och överlappning används.
 
-### Nyheter ovanför kalendern
+### Nyheter på startsidan
 Admin och superadmin publicerar via Administration → Nyheter och anslagstavla. Välj 1, 3, 7, 14 eller 30 dagar eller ett eget slutdatum och klockslag. Publicering kräver framtida sluttid. Läsaren kan dölja varje nyhet, vilket sparas per konto i databasen och gäller på alla enheter. Sluttiden gäller oavsett om nyheten lästs. Redigering ger en ny version som visas igen. Nyheter kan avpubliceras; gamla versioner kan inte skriva över nyare ändringar. Startsidan visar publicerade, ej utgångna nyheter som läsaren inte dolt. Anslagstavlan visar alla aktuella publicerade nyheter oberoende av personliga döljningar.
 
 Manualen i Praktisk information är samlad och uppdaterad i 0.5.007, med rollanpassade avsnitt för samtliga boknings-, kalender-, nyhets-, profil-, bemannings- och administrationsfunktioner. Samla in uppgifter ingår som ett fällbart avsnitt sist i manualen för admin och superadmin. Volontärer får enbart användarhjälpen.
@@ -512,3 +512,37 @@ SA kan slå på eller av **Kräv godkänd webbläsare för att läsa schemat** u
 **Incheckning och roterande QR kräver alltid godkänd visningswebbläsare**, oberoende av läslåset. En offentlig läslänk ger därför inga incheckningsrättigheter. Utan läslås kan visningsdatorn välja Registrera för incheckning och visa sin kod för SA. Med läslås visas registreringsrutan direkt. Detta ersätter föregående avsnitts krav att alla äldre läslänkar måste registreras: det gäller bara när SA aktiverar läslåset, eller när incheckning ska användas.
 
 Söndagens socialiseringsgrupp har nu två separata pass, **16–18 och 18–20**, även första söndagen i månaden. Vid uppgradering delas ännu inte påbörjade, genererade framtida 16–20-pass en gång. Gamla bokningar följer med till båda delarna och det första passets boknings-ID behålls. Noteringar följer med och inställda pass förblir inställda. Historik, redan påbörjade pass och egna anpassade pass lämnas orörda. Upprepad start skapar inte extra pass eller bokningar. Nya bokningar och avbokningar görs separat per tvåtimmarspass.
+
+## Version 0.6.034 – tydlig rubrik för incheckning
+QR-delen högst upp i det publika veckoschemat har nu rubriken **Incheckning**, ovanför texten Jag är här och hjälper till. Rubriken visas tillsammans med QR-delen när incheckning är tillgänglig på den godkända visningswebbläsaren. Manualerna beskriver placeringen.
+
+
+## Startsida och separat veckoschema – version 0.6.036
+
+Den befintliga designen, vänstermenyn, färginställningarna, logotypen och administrationens uppdelning behålls. Startsida har lagts till i menyn och öppnas efter inloggning samt via logotypen. Den bygger innehållsmässigt på det ljusa designförslaget, inom portalens befintliga grafiska profil.
+
+- **Startsida:** personlig hälsning, nästa egna bokning i valt katthem, pass med bemanningsbehov inom sju dagar, aktuella nyheter, rutin- och bokningspåminnelser, introduktion, översikt, adress/dörrkod, hopfällbar bokningsvägledning samt genvägar till praktisk information.
+- **Veckoschema:** enbart kalendern med veckoval, filter, dagval på mobil, Vecka/Lista, kalenderfiler, bokningsinformation och knappar för att boka eller hantera ett pass. Startsidesinnehållet visas därmed inte ovanför kalendern.
+- **Mina bokningar:** fortsatt egna bokningar över tillgängliga katthem och incheckning när den modulen är påslagen. Bokningsregler, åldersskydd, avbokning och behörigheter gäller som tidigare.
+- Passrutorna har kompakt, innehållsanpassad höjd. Röd bemanningsvarning går före egen bokningsbakgrund. Grönmarkerad volontär anges separat. På mobil är bokningsknapparna minst 44 pixlar höga.
+- På mobil öppnas menyn med Meny. Vid byte av vy är hopfällbara delar infällda; öppna delar bevaras vid uppdateringar i samma vy.
+- I volontärvyn heter katalogen **Kontaktpersoner**. Admin och superadmin använder fortsatt **Volontärer** för hanteringen.
+- Vid logotypen står **Tassportalen** med valt katthems namn under. Förekommande egen föreningslogotyp finns kvar. Samma benämning används vid inloggning och i webbläsarflikens titel.
+- Den publika visningsskärmens QR-del har rubriken **Incheckning**, från den tidigare förberedda uppdateringen. Incheckningens säkerhetsregler och avstängningsmöjlighet behålls.
+
+Manualerna för volontärer, admin och superadmin är uppdaterade. De två tidigare designexemplen sparas separat lokalt för jämförelse; deras alternativa toppmeny respektive sidomeny ingår inte som en generell ombyggnad i denna uppdatering.
+
+Startsidesbilden `public/portal-cat.png` är skapad med det inbyggda bildverktyget som dekorativ miljöbild. Det är inte ett foto av en identifierad katt på hemmet. Prompt: en avslappnad brun tigrerad katt på en elfenbensvit filt i ett ljust katthemsrum, naturligt fönsterljus, varmvit och blek salviagrön bakgrund, realistisk fotografisk stil, liggande format utan text eller logotyp.
+
+**Kontaktpersoner:** i volontärvyn öppnas kontaktlistan utfälld. Volontären kan fälla ihop den under samma sidbesök. När sidan öppnas på nytt visas den utfälld igen. Styrelselistan under Praktisk information och administratörernas volontärsida behåller hopfällbar standardvisning.
+
+Veckovyn behåller även passerade pass i den valda veckan. I Alla pass visas historiken tillsammans med kommande pass. Passerade pass har märkningen Passerat och knappen Visa pass för läsning; nya bokningar på redan påbörjade pass tillåts inte. Ingen ny tidsgräns för radering av gamla pass införs.
+
+
+### Grundstandard och Djurens Vänners profil
+
+Portalens ursprungliga gröna färger behålls som grundstandard. Egna färger och uppladdade logotyper bevaras. Befintliga profiler skrivs inte över vid uppdateringen.
+
+Djurens Vänners blå profil använder **RGB 1, 42, 94 / #012A5E**, ljus bakgrund och vita ytor. Admin eller superadmin kan välja **Administration → Grafisk profil → Djurens Vänner – blå profil**, förhandsgranska och spara. Profilvalet behåller uppladdad logotyp och gäller bara valt katthem. **Återställ grön grundstandard** återställer ursprungliga färger och standardlogotyp. Huskvarnas befintliga sparade blå huvudfärg fungerar även utan att en ny profil väljs.
+
+Huvudfärgen används på knappar, rubriker, menyval och länkar. Röda bemanningsvarningar och gröna statusmarkeringar är oberoende av profilfärgen. Ett eget underbemannat pass har röd bakgrund och separat grön text för den egna bokningen; vanliga egna bokningar har ljusgrön bakgrund. Visningsskärmen behåller sin befintliga profil och får rubriken Incheckning ovanför QR-koden. Incheckningens säkerhetsregler och möjlighet till avstängning är oförändrade.
