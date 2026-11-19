@@ -335,8 +335,9 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await(await call('slots/series','POST',{...extraSeries,preview:true},ac)).json()).rows.filter(r=>r.status==='new').length,0);
  assert.equal((await call('slots/series','POST',{...extraSeries,key:extraPlan.key},newAdminCookie)).status,409);
  const sundaySeries=await(await call('slots/series','POST',{...extraSeries,date:firstSunday,until:firstSunday,start:'16:00',end:'18:00',preview:true},ac)).json();assert.notEqual(sundaySeries.rows[0].status,'cancelled');
- const unified={...memberPayload,name:'Gemensam volontär',email:'unified@example.se',member_number:'UNIFIED',account:{role:'volunteer',password:'UnifiedPassword123',active:true,green:true}};
+ const unified={...memberPayload,name:'Gemensam volontär',email:'unified@example.se',board_role:'none',member_number:'UNIFIED',account:{role:'volunteer',password:'UnifiedPassword123',active:true,green:true}};
  assert.equal((await call('volunteers','POST',unified,vc)).status,403);
+ assert.equal((await call('volunteers','POST',{...unified,board_role:'member'},newAdminCookie)).status,403);
  const unifiedResponse=await call('volunteers','POST',unified,newAdminCookie);assert.equal(unifiedResponse.status,200);const unifiedState=await unifiedResponse.json(),unifiedProfile=unifiedState.members.find(m=>m.email===unified.email);assert.ok(unifiedProfile.user_id);assert.ok(unifiedState.users.some(u=>u.id===unifiedProfile.user_id&&u.name===unified.name));assert.ok(!JSON.stringify(unifiedState).includes('UnifiedPassword123'));
  assert.equal((await call('volunteers/'+unifiedProfile.id,'PUT',{...unified,revision:unifiedProfile.revision,phone:'070999',account:{...unified.account,password:''}},newAdminCookie)).status,200);
  assert.equal((await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision+1},vc)).status,403);

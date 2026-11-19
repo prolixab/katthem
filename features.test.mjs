@@ -182,3 +182,16 @@ test('Återkommande: aktuell rekommendation och ändrad gräns kräver ny förha
 });
 
 test('Uppdelning av socialiseringspass ändrar inte ett redan påbörjat pass',()=>{const db=database();try{db.exec("CREATE TABLE schedule_origins(date TEXT,start TEXT,slot_id INTEGER REFERENCES slots(id),PRIMARY KEY(date,start));INSERT INTO slots VALUES(1,'2030-04-07','16:00','20:00','Socialiseringsgruppen',0,'Påbörjat',0,'regular');INSERT INTO schedule_origins VALUES('2030-04-07','16:00',1),('2030-04-07','18:00',1);INSERT INTO bookings VALUES(1,1,1)");upgradeSundayShifts(db,new Date('2030-04-07T17:00'));assert.equal(db.prepare('SELECT end FROM slots WHERE id=1').get().end,'20:00');assert.equal(db.prepare('SELECT count(*) n FROM slots').get().n,1);assert.equal(db.prepare('SELECT count(*) n FROM bookings').get().n,1)}finally{db.close()}});
+
+
+test('Styrelse: sparning ger admin, bevarar SA och kräver SA för befordran',()=>{const {db,members,service,actor,data}=volunteerFixture();try{
+ const board={...data,board_role:'member'};
+ assert.throws(()=>service.save(null,board,{id:98,role:'admin'}),e=>e.status===403);
+ assert.equal(members.list().length,0);
+ const id=service.save(null,board,actor);let m=members.list().find(m=>m.id===id);
+ assert.equal(db.prepare('SELECT role FROM users WHERE id=?').get(m.user_id).role,'admin');
+ service.save(id,{...m,board_role:'none',account:{role:'admin'}},actor);
+ assert.equal(db.prepare('SELECT role FROM users WHERE id=?').get(m.user_id).role,'admin');
+ m=members.list().find(m=>m.id===id);service.save(id,{...m,board_role:'chair',account:{role:'superadmin'}},actor);
+ assert.equal(db.prepare('SELECT role FROM users WHERE id=?').get(m.user_id).role,'superadmin');
+ }finally{db.close()}});

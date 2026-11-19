@@ -558,3 +558,15 @@ Logotypens motiv visas i en fast yta vid byte av katthem: 62 × 62 px på dator 
 Menyn har grupperna **Vardag** och **Information** samt **Administration** för admin och superadmin. Vardag innehåller Startsida, Veckoschema och Mina bokningar. Information innehåller Praktisk information, Kontaktpersoner för volontärer och Anslagstavla. Administrationsgruppen innehåller Bemanning, Volontärer när katalogen är tillgänglig och Administration. Funktionerna och behörigheterna är oförändrade.
 
 Enhetliga linjeikoner används för menyvalen. Aktiv sida har ljus bakgrund och en smal markering i valt katthems huvudfärg. Mitt konto och Logga ut är samlade under profilen längst ned. På mobil finns även dessa val inne i den hopfällbara menyn. De tidigare menybredderna och jämna logotypstorlekarna behålls. Alla tre rollmanualer är uppdaterade.
+
+## Linjerade block på startsidan
+
+Välkomstsektionen, informationsblocken och genvägarna använder lika breda kolumner och samma mellanrum vid respektive skärmbredd. Blockens inner- och ytterkanter linjerar även i smalare dator- och surfplattefönster. På mobil staplas blocken i en kolumn. Manualen för alla roller är uppdaterad.
+
+Under **Mitt konto** visas **Min profil** före **Byt lösenord**, för volontärer, admin och superadmin.
+
+## Kompakta volontärskort
+
+Volontärslistan använder tre kolumner på stora skärmar, två på mindre och en på mobil. Vita kort har initialer, namn, roll, eventuellt uppdrag och ansvar, e-postlänk samt genomförda pass. Tomma ansvarsbeskrivningar och upprepat katthemsnamn utelämnas. Grönmarkering visas med kant och text; introduktion som pågår har egen status. Visa profil ligger i kortets nederkant. Alla befintliga sökfilter och profilåtgärder finns kvar, med nya filter för styrelse, administratörer och volontärer.
+
+Styrelsemedlemmar märks **Styrelse** i korten. När superadmin sparar en styrelsemedlem med volontärbehörighet får kontot automatiskt adminbehörighet; superadminbehörighet bevaras. Befintlig regel att endast superadmin får ändra administratörsbehörigheter gäller även denna befordran. Borttagen styrelseroll tar inte automatiskt bort en separat adminbehörighet.

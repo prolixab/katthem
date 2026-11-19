@@ -8,7 +8,7 @@ export function createVolunteers(db,members,hash){
   const previous=id===null?null:db.prepare('SELECT * FROM member_profiles WHERE id=?').get(id);if(id!==null&&!previous)fail('Volontären finns inte.',404);
   const target=previous?.user_id?db.prepare('SELECT * FROM users WHERE id=?').get(previous.user_id):null;
   if(typeof p.name!=='string'||!p.name.trim()||typeof p.email!=='string')fail('Ange namn och kontrollera e-post.');
-  const name=p.name.trim(),email=p.email.trim().toLowerCase(),password=p.account.password??'',role=p.account.role??target?.role??'volunteer',active=p.account.active??Boolean(target?.active??true),green=p.account.green??Boolean(target?.green_manual);
+  const name=p.name.trim(),email=p.email.trim().toLowerCase(),password=p.account.password??'',requestedRole=p.account.role??target?.role??'volunteer',role=p.board_role&&p.board_role!=='none'&&p.status!=='ended'&&requestedRole==='volunteer'?'admin':requestedRole,active=p.account.active??Boolean(target?.active??true),green=p.account.green??Boolean(target?.green_manual);
   if(typeof password!=='string'||password&& (password.length<10||password.length>200)||!['volunteer','admin','superadmin'].includes(role)||typeof active!=='boolean'||typeof green!=='boolean')fail('Kontrollera lösenord, behörighet och aktivering.');
   if(id===null&&!password)fail('Ange ett tillfälligt lösenord med 10–200 tecken för den nya volontären.');
   const createsLogin=!target&&Boolean(password);
