@@ -9,6 +9,7 @@ export function createMembers(db){
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='animal_care_trained'))db.exec('ALTER TABLE member_profiles ADD COLUMN animal_care_trained INTEGER NOT NULL DEFAULT 0');
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='messenger_url'))db.exec("ALTER TABLE member_profiles ADD COLUMN messenger_url TEXT NOT NULL DEFAULT ''");
  if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='volunteer_bag'))db.exec('ALTER TABLE member_profiles ADD COLUMN volunteer_bag INTEGER NOT NULL DEFAULT 0');
+ if(!db.prepare('PRAGMA table_info(member_profiles)').all().some(c=>c.name==='contact_focus'))db.exec("ALTER TABLE member_profiles ADD COLUMN contact_focus TEXT NOT NULL DEFAULT ''");
  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS member_account_unique ON member_profiles(user_id) WHERE user_id IS NOT NULL');
  function syncAccounts(){
   db.exec('BEGIN IMMEDIATE');try{
@@ -27,10 +28,12 @@ export function createMembers(db){
  function save(id,p,{transaction=true}={}){
   const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
   if(!p||typeof p!=='object')fail('Kontrollera volontärsuppgifterna.');
-  const limits={name:100,email:254,phone:100,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150,messenger_url:500},data={};
-  const previousDetails=id===null?null:db.prepare('SELECT shelter,animal_care_trained,messenger_url,volunteer_bag FROM member_profiles WHERE id=?').get(id);if(p.shelter===undefined)p={...p,shelter:previousDetails?.shelter||''};if(p.messenger_url===undefined)p={...p,messenger_url:previousDetails?.messenger_url||''};
+  const limits={name:100,email:254,phone:100,status:30,board_role:30,board_title:100,responsibilities:2000,note:3000,birth_date:10,shelter:150,messenger_url:500,contact_focus:20},data={};
+  const previousDetails=id===null?null:db.prepare('SELECT shelter,animal_care_trained,messenger_url,volunteer_bag,contact_focus FROM member_profiles WHERE id=?').get(id);if(p.shelter===undefined)p={...p,shelter:previousDetails?.shelter||''};if(p.messenger_url===undefined)p={...p,messenger_url:previousDetails?.messenger_url||''};
+  if(p.contact_focus===undefined)p={...p,contact_focus:previousDetails?.contact_focus||''};
   for(const [key,limit] of Object.entries(limits)){if(key==='birth_date'&&p[key]===undefined)p={...p,birth_date:''};if(typeof p[key]!=='string'||p[key].length>limit)fail('Kontrollera volontärsuppgifterna och textlängderna.');data[key]=p[key].trim()}
   if(data.messenger_url){try{const url=new URL(data.messenger_url);if(url.protocol!=='https:'||url.username||url.password||url.port||!(['m.me','messenger.com','www.messenger.com'].includes(url.hostname)&&url.pathname!=='/'||['facebook.com','www.facebook.com','m.facebook.com'].includes(url.hostname)&&url.pathname.startsWith('/messages/t/')))throw Error();data.messenger_url=url.href}catch{fail('Ange en giltig HTTPS-länk till Messenger (m.me, messenger.com eller facebook.com/messages/t/), eller lämna fältet tomt.')}}
+  if(!['','jonkoping','varnamo','both'].includes(data.contact_focus))fail('Välj giltigt kontaktansvar.');
   if(!data.name)fail('Ange volontärens namn.');
   if(data.email&&!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(data.email))fail('Ange giltig e-postadress eller lämna fältet tomt.');
   if(!['active','supporting','paused','ended'].includes(data.status)||!['none','chair','vice_chair','treasurer','secretary','member','deputy','other'].includes(data.board_role))fail('Kontrollera volontärstatus och styrelseroll.');

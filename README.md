@@ -570,3 +570,11 @@ Under **Mitt konto** visas **Min profil** före **Byt lösenord**, för volontä
 Volontärslistan använder tre kolumner på stora skärmar, två på mindre och en på mobil. Vita kort har initialer, namn, roll, eventuellt uppdrag och ansvar, e-postlänk samt genomförda pass. Tomma ansvarsbeskrivningar och upprepat katthemsnamn utelämnas. Grönmarkering visas med kant och text; introduktion som pågår har egen status. Visa profil ligger i kortets nederkant. Alla befintliga sökfilter och profilåtgärder finns kvar, med nya filter för styrelse, administratörer och volontärer.
 
 Styrelsemedlemmar märks **Styrelse** i korten. När superadmin sparar en styrelsemedlem med volontärbehörighet får kontot automatiskt adminbehörighet; superadminbehörighet bevaras. Befintlig regel att endast superadmin får ändra administratörsbehörigheter gäller även denna befordran. Borttagen styrelseroll tar inte automatiskt bort en separat adminbehörighet.
+
+## Kontaktansvar för styrelsen
+
+Admin och superadmin anger Kontaktansvar under Volontärer → Visa profil → Redigera profil: **Jönköping / Huskvarna**, **Värnamo** eller **Båda katthemmen**. Fältet börjar tomt; det härleds inte från arbetsplats eller inloggningsbehörighet. Kontaktansvar ändrar inte roll, aktivering eller katthemsåtkomst. Befintliga profiler behåller sina uppgifter.
+
+Kontaktpersoner och Praktisk information använder kompakta kort med initialer, namn, styrelseuppdrag, kontaktansvar och telefon/Messenger. Personer för valt katthem visas först, följda av övriga tillgängliga kontakter. Kontaktansvar som saknas visas som Ej angivet. Kort har två kolumner på dator och en på mobil; Ändra telefon finns kvar för admin och SA. Alla rollmanualer är uppdaterade.
+
+Kontaktansvar följer profilens befintliga synkronisering mellan katthem med explicit tilldelad åtkomst. Lokala ändringar i mottagande katthem bevaras enligt samma regler som telefon och Messenger. Fältet ger inte nya personer åtkomst eller exponerar profiler från andra katthem utan befintlig koppling.

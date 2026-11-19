@@ -195,3 +195,18 @@ test('Styrelse: sparning ger admin, bevarar SA och kräver SA för befordran',()
  m=members.list().find(m=>m.id===id);service.save(id,{...m,board_role:'chair',account:{role:'superadmin'}},actor);
  assert.equal(db.prepare('SELECT role FROM users WHERE id=?').get(m.user_id).role,'superadmin');
  }finally{db.close()}});
+
+
+test('Kontaktansvar: migration, validering, bevarande och oberoende av behörighet',()=>{const {db,members,service,actor,data}=volunteerFixture();try{
+ const id=service.save(null,{...data,contact_focus:'jonkoping'},actor);let m=members.list().find(m=>m.id===id);
+ assert.equal(m.contact_focus,'jonkoping');assert.equal(db.prepare('SELECT role FROM users WHERE id=?').get(m.user_id).role,'volunteer');
+ const {contact_focus,...legacy}=m;members.save(id,legacy);m=members.list().find(m=>m.id===id);assert.equal(m.contact_focus,'jonkoping');
+ assert.throws(()=>members.save(id,{...m,contact_focus:'wrong'}),e=>e.status===400);
+ for(const focus of ['varnamo','both','']){members.save(id,{...m,contact_focus:focus});m=members.list().find(m=>m.id===id);assert.equal(m.contact_focus,focus)}
+ }finally{db.close()}});
+
+test('Kontaktkort: valt katthem prioriteras och profiltext skyddas',()=>{const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),defs=source.split('\n').filter(l=>l.startsWith('const contactFocusLabel=')||l.startsWith('function contactPriority(')||l.startsWith('function sortedContacts(')||l.startsWith('function contactCard(')).join('\n');
+ const context={state:{shelter:{id:'huskvarna'}},esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),editPhoneButton:()=>'',messengerContact:()=> 'Kontakta via Messenger'};
+ const result=runInNewContext(defs+`;const people=[{name:'A',board_role:'member',contact_focus:'varnamo'},{name:'Z',board_role:'member',contact_focus:'jonkoping'},{name:'B',board_role:'member',contact_focus:'both'}];({names:sortedContacts(people).map(p=>p.name).join(','),html:contactCard({...people[1],name:'<img>',phone:'070 12',responsibilities:'<script>'},'Ledamot')})`,context);
+ assert.equal(result.names,'B,Z,A');assert.ok(result.html.includes('Jönköping / Huskvarna'));assert.ok(result.html.includes('tel:07012'));assert.ok(!result.html.includes('<script>'));assert.ok(!result.html.includes('<img>'));
+});
