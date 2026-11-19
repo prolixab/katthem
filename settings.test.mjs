@@ -14,3 +14,17 @@ test('Logotypvisning: vita/transparenta marginaler jämnas ut utan att klippa mo
  const transparent=new Uint8ClampedArray(10*10*4);assert.equal(vm.runInNewContext(source+';logoContentBounds(pixels,10,10)',{pixels:transparent}),null);transparent.set([1,42,94,255],0);
  const edge=vm.runInNewContext(source+';logoContentBounds(pixels,10,10)',{pixels:transparent});assert.equal(edge.x,0);assert.equal(edge.y,0);assert.equal(edge.width,2);assert.equal(edge.height,2);
 });
+
+
+test('Menygrupper: rollstyrning och konto längst ned utan dubbla menyval',()=>{
+ const app=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),source=app.slice(app.indexOf('function menuIcon('),app.indexOf('function administrationPage('));
+ const context=vm.createContext({state:{user:{name:'Testvolontär',role:'volunteer'},members_enabled:true},view:'home',isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s),roleLabel:s=>s});vm.runInContext(source,context);
+ for(const role of ['volunteer','admin','superadmin']){
+  context.state.user.role=role;
+  const groups=JSON.parse(JSON.stringify(vm.runInContext('navigationGroups()',context))),html=vm.runInContext('navigationMarkup()',context),keys=groups.flatMap(g=>g.items.map(item=>item[0]));
+  assert.deepEqual(keys.slice(0,3),['home','schedule','mine']);assert.equal(new Set(keys).size,keys.length);assert.ok(!keys.includes('account'));
+  assert.equal(groups.some(g=>g.id==='administration'),role!=='volunteer');
+  assert.equal(groups.find(g=>g.id==='information').items.some(item=>item[0]==='members'),role==='volunteer');
+  assert.ok(html.indexOf('data-view="account"')>html.indexOf('class="side-bottom"'));assert.equal((html.match(/data-view="account"/g)||[]).length,1);assert.match(html,/data-action="logout"/);assert.match(html,/aria-current="page"/);assert.match(html,/class="menu-icon"/);
+ }
+});

@@ -552,3 +552,9 @@ Huvudfärgen används på knappar, rubriker, menyval och länkar. Röda bemannin
 Menykolumnen är 270 px på större skärmar och 255 px i smalare datorfönster. Tassportalen hålls på en rad vid logotypen. På mobil används fortsatt hopfällbar meny och mindre logotyp; på de smalaste skärmarna anpassas även namnets textstorlek. Manualerna är uppdaterade.
 
 Logotypens motiv visas i en fast yta vid byte av katthem: 62 × 62 px på dator och 36 × 36 px på mobil. Vita och transparenta yttermarginaler i olika bildfiler jämnas ut för visningen, utan att originalfilerna ändras. Bildens proportioner och hela motivet bevaras.
+
+## Tydligare vänstermeny – version 0.6.038
+
+Menyn har grupperna **Vardag** och **Information** samt **Administration** för admin och superadmin. Vardag innehåller Startsida, Veckoschema och Mina bokningar. Information innehåller Praktisk information, Kontaktpersoner för volontärer och Anslagstavla. Administrationsgruppen innehåller Bemanning, Volontärer när katalogen är tillgänglig och Administration. Funktionerna och behörigheterna är oförändrade.
+
+Enhetliga linjeikoner används för menyvalen. Aktiv sida har ljus bakgrund och en smal markering i valt katthems huvudfärg. Mitt konto och Logga ut är samlade under profilen längst ned. På mobil finns även dessa val inne i den hopfällbara menyn. De tidigare menybredderna och jämna logotypstorlekarna behålls. Alla tre rollmanualer är uppdaterade.
