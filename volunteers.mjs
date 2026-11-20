@@ -1,6 +1,6 @@
 import {setPasswordChange} from './password-policy.mjs';
 import {isAdmin,isSuperAdmin,canManageAccount} from './roles.mjs';
-export function createVolunteers(db,members,hash){
+export function createVolunteers(db,members,hash,{onCreated=()=>{}}={}){
  const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
  function save(id,p,actor){
   if(!isAdmin(actor))fail('Du saknar administratörsbehörighet.',403);
@@ -28,6 +28,7 @@ export function createVolunteers(db,members,hash){
     if(passwordHash)setPasswordChange(db,target.id,true);
     if(passwordHash||role!==target.role||active!==Boolean(target.active)){db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);db.prepare('DELETE FROM password_resets WHERE user_id=?').run(target.id)}
    }
+   if(createsLogin)onCreated(uid);
    db.exec('COMMIT');return profileId;
   }catch(e){db.exec('ROLLBACK');throw e}
  }

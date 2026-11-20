@@ -1,3 +1,4 @@
+import {canonicalShelterName} from './shelter.mjs';
 import {createScheduleDisplay,displaySchedule,displayNames,createPresenceTickets,createPresenceGrants} from './display.mjs';
 import {readFileSync,createReadStream,statSync} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
@@ -26,7 +27,8 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  CREATE TABLE IF NOT EXISTS grants(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL REFERENCES shelters(id),role TEXT NOT NULL CHECK(role IN ('admin','volunteer')),PRIMARY KEY(source,user_id,target));
  CREATE TABLE IF NOT EXISTS portal_sessions(token TEXT PRIMARY KEY,source TEXT NOT NULL,user_id INTEGER NOT NULL,source_token TEXT NOT NULL,selected TEXT NOT NULL,expires INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS shadows(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,local_id INTEGER NOT NULL,PRIMARY KEY(source,user_id,target),UNIQUE(target,local_id));`);
- registry.prepare('INSERT OR IGNORE INTO shelters VALUES(?,?)').run(primary,'Huskvarna / Jönköping');
+ registry.prepare('INSERT OR IGNORE INTO shelters VALUES(?,?)').run(primary,'Huskvarna');
+ for(const row of registry.prepare('SELECT id,name FROM shelters').all()){const name=canonicalShelterName(row.name);if(name!==row.name)registry.prepare('UPDATE shelters SET name=? WHERE id=?').run(name,row.id)}
  registry.exec('CREATE TABLE IF NOT EXISTS shadow_profile_sync(source TEXT NOT NULL,user_id INTEGER NOT NULL,target TEXT NOT NULL,values_json TEXT NOT NULL,PRIMARY KEY(source,user_id,target))');
  const audit=createAudit(registry),backups=createBackups({dataDir,backupDir:env.BACKUP_DIR||path.join(dataDir,'backups')});
  const backupsEnabled=(env.BACKUP_ENABLED??(env.NODE_ENV==='test'?'0':'1'))!=='0';
@@ -236,13 +238,13 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     if(/^\/api\/portal\/manage\/shelters\/[a-z0-9-]+$/.test(url.pathname)&&req.method==='PATCH'){
      const id=url.pathname.split('/').pop(),current=house(id);if(!current)fail('Katthemmet finns inte.',404);
      const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||/[\x00-\x1f\x7f]/.test(fields.name)||typeof fields.previous_name!=='string')fail('Ange ett namn med 1–100 tecken och öppna formuläret igen vid behov.');
-     const name=fields.name.trim();if(houses().some(h=>h.id!==id&&h.name.toLocaleLowerCase('sv-SE')===name.toLocaleLowerCase('sv-SE')))fail('Ett annat katthem har redan det namnet.');
+     const name=canonicalShelterName(fields.name);if(houses().some(h=>h.id!==id&&h.name.toLocaleLowerCase('sv-SE')===name.toLocaleLowerCase('sv-SE')))fail('Ett annat katthem har redan det namnet.');
      const changed=registry.prepare('UPDATE shelters SET name=? WHERE id=? AND name=?').run(name,id,fields.previous_name);if(!changed.changes)fail('Namnet har ändrats av någon annan. Stäng och öppna katthemslistan innan du sparar igen.',409);
      audit.record({home:id,actor:p,action:'shelter.renamed',details:{name}});return send({id,name});
     }
     if(url.pathname==='/api/portal/manage/shelters'&&req.method==='POST'){
      const fields=json(payload);if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>100||typeof fields.address!=='string'||fields.address.length>4000)fail('Ange katthemmets namn och adress.');if(houses().length>=50)fail('Högst 50 katthem kan läggas till.');
-     const id=randomBytes(12).toString('hex');registry.prepare('INSERT INTO shelters VALUES(?,?)').run(id,fields.name.trim());try{const w=await worker(id);w.db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(fields.address.trim())}catch(e){registry.prepare('DELETE FROM shelters WHERE id=?').run(id);throw e}return send({id},201);
+     const name=canonicalShelterName(fields.name);if(houses().some(h=>h.name.toLocaleLowerCase('sv-SE')===name.toLocaleLowerCase('sv-SE')))fail('Ett annat katthem har redan det namnet.');const id=randomBytes(12).toString('hex');registry.prepare('INSERT INTO shelters VALUES(?,?)').run(id,name);try{const w=await worker(id);w.db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(fields.address.trim())}catch(e){registry.prepare('DELETE FROM shelters WHERE id=?').run(id);throw e}return send({id},201);
     }
     if(['/api/portal/manage/transfers/preview','/api/portal/manage/transfers'].includes(url.pathname)&&req.method==='POST'){const fields=json(payload);if(!house(fields.source)||!house(fields.target))fail('Välj katthem.');await worker(fields.source);await worker(fields.target);if(url.pathname.endsWith('/preview'))return send(transfers.preview(fields));const result=transfers.move(fields);await reconcile();return send(result)}
     if(url.pathname==='/api/portal/manage/grants'&&req.method==='POST'){

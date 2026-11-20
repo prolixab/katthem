@@ -236,14 +236,14 @@ Lägg till volontär och Redigera volontärprofil hanterar nu både personuppgif
 
 Version 0.6.002: Volontärer blir gröna vid minst tio genomförda bokningar och komplett introduktionschecklista. Manuell/importerad grönmarkering ersätter bara passkravet; admin och superadmin är fortsatt alltid gröna. Söndagar har ett gemensamt socialiseringspass 16–20 även vid öppet hus. Framtida oförändrade standardpass slås samman med bibehållna deltagare; historik och anpassade pass bevaras. Dörrkod och tre statistikfält visas i fyra lika stora rutor på stor skärm, med dörrkoden först.
 
-Katthem kopplas via profilfältet Katthem: Huskvarna och Jönköping/Jonkoping avser samma adress och dörrkod. Äldre tomma profiler använder befintligt katthem; en okänd ort visar ingen adress eller kod. Samma adressval används i personens kalenderexport och prenumeration. Admin redigerar fortsatt Huskvarna-katthemmets gemensamma adress och kod.
+Katthem kopplas via profilfältet Katthem: Huskvarna använder katthemmets gemensamma adress och dörrkod. Äldre tomma profiler använder befintligt katthem; en okänd ort visar ingen adress eller kod. Samma adressval används i personens kalenderexport och prenumeration. Admin redigerar fortsatt Huskvarna-katthemmets gemensamma adress och kod.
 
 
 ## Flera katthem (0.6.003)
 
 Starta med npm start (portal.mjs), även i produktion. Docker och Windows-startfilen använder portalen. server.mjs är en intern server per katthem och får inte användas som publik produktionsstart. Portalen binder den publika porten och startar en intern server på loopback per registrerat katthem, med en hemlig intern åtkomstnyckel. Alla API-anrop auktoriseras i portalen innan de skickas till valt hem. Det är separata SQLite-databaser, e-postinställningar, CSV-jobb, kalenderprenumerationer, schema, profiler och nyheter.
 
-Befintlig data ligger kvar orörd i det ursprungliga hemmet Huskvarna / Jönköping. Katthemstillhörighet bestäms av kontots ordinarie hem och explicita tilldelningar, aldrig av fritext eller matchande e-post. Superadmin i det ursprungliga hemmet har tillgång till alla hem. Under Administration → Hantera katthem och åtkomst kan superadmin skapa hem och tilldela/återkalla extra åtkomst som admin eller volontär. Nya hem får inga exempelkonton, ingen förifylld kod och ingen kopia av Huskvarnas adress eller e-postinställningar. Välj det nya hemmet och fyll i uppgifterna där. Systemets superadmin skapas bara i det ursprungliga hemmet.
+Befintlig data ligger kvar orörd i det ursprungliga hemmet Huskvarna. Katthemstillhörighet bestäms av kontots ordinarie hem och explicita tilldelningar, aldrig av fritext eller matchande e-post. Superadmin i det ursprungliga hemmet har tillgång till alla hem. Under Administration → Hantera katthem och åtkomst kan superadmin skapa hem och tilldela/återkalla extra åtkomst som admin eller volontär. Nya hem får inga exempelkonton, ingen förifylld kod och ingen kopia av Huskvarnas adress eller e-postinställningar. Välj det nya hemmet och fyll i uppgifterna där. Systemets superadmin skapas bara i det ursprungliga hemmet.
 
 Inloggningen väljer det ordinarie hemmet. Tilldelad styrelse/admin använder sitt ordinarie lösenord och kan växla mellan tilldelade hem. För ett annat hem skapas en separat åtkomstidentitet med egen lokal profil och bokningshistorik. Den kan inte användas för separat inloggning; åtkomsten kontrolleras mot ursprungskontot och tilldelningarna vid varje anrop. Ändringar i en annan persons uppdrag i ett hem ger inte åtkomst till fler hem. Återkallad åtkomst spärrar även den tilldelade identitetens kalenderprenumeration, medan historik behålls. Avstängning av ursprungskontot stoppar åtkomst till alla dess hem.
 
@@ -471,7 +471,7 @@ Introduktionschecklistan innehåller även `profile-updated`: volontären öppna
 Databasskrivningar i katthemmens server väntar upp till fem sekunder på ett tillfälligt SQLite-lås i stället för att omedelbart avbrytas. Bokningskvoten kontrolleras fortfarande i transaktionen. E-postinställningar ersätts atomiskt med unik temporär fil och begränsade återförsök vid tillfälliga Windows-lås; befintlig fil behålls vid misslyckat sparande.
 
 ### Katthemmets namn i inloggat läge (0.6.019)
-Vid logotypen visas valt katthems namn när användaren är inloggad. Huskvarna / Jönköping förkortas till Huskvarna i denna rubrik. Namnet uppdateras vid byte av katthem och visas även med standardlogotypen. Inloggningssidan behåller Volontärsportalen.
+Vid logotypen visas valt katthems namn när användaren är inloggad. Katthemmet visas som Huskvarna. Namnet uppdateras vid byte av katthem och visas även med standardlogotypen. Inloggningssidan behåller Volontärsportalen.
 
 ## Version 0.6.028 – myndig medbokad, navigation och praktisk information
 Volontärer som är under 18 på **passets datum** kan bara bokas om en aktiv person med aktivt engagemang och registrerat födelsedatum, som då är minst 18, redan är bokad på **samma pass**. Regeln gäller även adminbokning och varje nytt tillfälle i återkommande bokningar. Saknat födelsedatum tillåter egen bokning men räknas inte som myndigt sällskap. Födelsedatum får framöver läggas till/rättas av admin/SA i volontärprofilen; självbetjäningsvägen avvisar ändringar. Det hindrar att en känd minderårig kringgår spärren genom att ta bort eller ändra sitt datum.
@@ -485,7 +485,7 @@ Uppföljning av inaktivitet sker efter **60 dygn** sedan senaste genomförda bok
 Vid tilldelad åtkomst till flera katthem hämtar ålderskontrollen registrerat födelsedatum från det ordinarie hemmet via en skrivskyddad databasanslutning, utan att kopiera datumet till den andra profilen eller exponera det i dess svar. Ett känt födelsedatum i ordinarie hemmet går före lokala uppgifter; om det saknas används ett eventuellt lokalt administrerat datum.
 
 ## Version 0.6.029 – ändringsbar uppföljning efter 30 dagar
-Standardgränsen för uppföljning är nu **30 dygn**, även vid uppgradering från den tidigare fasta 60-dagarsgränsen. Under **Administration → Uppföljning och kontakt → Volontärer att följa upp** kan Admin och SA ändra gränsen till ett heltal mellan 1 och 365 dagar för sitt katthem. Värdet lagras i `activity_settings`, följer med databasbackuper och skyddas med revisionskontroll. Ändringen loggas i adminhistoriken och listan räknas om direkt.
+Standardgränsen för uppföljning är nu **30 dygn**, även vid uppgradering från den tidigare fasta 60-dagarsgränsen. Under **Administration → Uppföljning och kontakt → Volontärer att följa upp** kan Admin och SA ändra gränsen till 30, 60 eller 90 dagar i en vallista för sitt katthem. Värdet lagras i `activity_settings`, följer med databasbackuper och skyddas med revisionskontroll. Ändringen loggas i adminhistoriken och listan räknas om direkt.
 
 Beräkningen utgår från senaste avslutade bokade passet, eller kontots skapande om sådana pass saknas. Samma inställda frist gäller nya konton. Endast aktiva volontärer med aktivt engagemang flaggas. Ingen automatisk inaktivering, gallring eller e-post sker på grund av uppföljningssignalen. Närvarobekräftelser påverkar inte beräkningen. Äldre dokumentavsnitt med fast gräns på 60 dagar gäller tidigare versioner.
 
@@ -573,8 +573,22 @@ Styrelsemedlemmar märks **Styrelse** i korten. När superadmin sparar en styrel
 
 ## Kontaktansvar för styrelsen
 
-Admin och superadmin anger Kontaktansvar under Volontärer → Visa profil → Redigera profil: **Jönköping / Huskvarna**, **Värnamo** eller **Båda katthemmen**. Fältet börjar tomt; det härleds inte från arbetsplats eller inloggningsbehörighet. Kontaktansvar ändrar inte roll, aktivering eller katthemsåtkomst. Befintliga profiler behåller sina uppgifter.
+Admin och superadmin anger Kontaktansvar under Volontärer → Visa profil → Redigera profil: **Huskvarna**, **Värnamo** eller **Båda katthemmen**. Fältet börjar tomt; det härleds inte från arbetsplats eller inloggningsbehörighet. Kontaktansvar ändrar inte roll, aktivering eller katthemsåtkomst. Befintliga profiler behåller sina uppgifter.
 
-Kontaktpersoner och Praktisk information använder kompakta kort med initialer, namn, styrelseuppdrag, kontaktansvar och telefon/Messenger. Personer för valt katthem visas först, följda av övriga tillgängliga kontakter. Kontaktansvar som saknas visas som Ej angivet. Kort har två kolumner på dator och en på mobil; Ändra telefon finns kvar för admin och SA. Alla rollmanualer är uppdaterade.
+Kontaktpersoner och Praktisk information använder kompakta kort med initialer, namn, styrelseuppdrag, kontaktansvar och telefon/Messenger. Personer för valt katthem visas först, följda av övriga tillgängliga kontakter. Kontaktansvar som saknas visas som Ej angivet. Kort har två kolumner på dator och en på mobil; Kontaktkorten har ingen knapp för telefonredigering. Admin och SA ändrar telefonnummer under Volontärer → Visa profil → Redigera profil. Alla rollmanualer är uppdaterade.
 
 Kontaktansvar följer profilens befintliga synkronisering mellan katthem med explicit tilldelad åtkomst. Lokala ändringar i mottagande katthem bevaras enligt samma regler som telefon och Messenger. Fältet ger inte nya personer åtkomst eller exponerar profiler från andra katthem utan befintlig koppling.
+
+Uppföljning har fasta alternativ: **30, 60 eller 90 dagar**, med 30 som standard. Äldre andra värden anpassas uppåt till närmaste alternativ, högst 90 dagar (exempel: 45 blir 60). Befintliga 30/60/90 bevaras. Ingen automatisk inaktivering sker.
+
+Ortnamnet visas genomgående som **Huskvarna**, även i kontaktansvar, katthemsval och manualer. Äldre alternativa ortnamn i katthemsregistret och profilernas katthemsfält normaliseras till Huskvarna. Interna kontaktansvarsvärden och äldre ortalias fungerar fortsatt för befintliga uppgifter.
+
+## Välkomstmejl för nya konton
+
+Nya inloggningskonton får ett välkomstmejl med ämnet **Välkommen till Tassportalen – välj ditt lösenord**. Mejlet innehåller en engångslänk som gäller i 24 timmar och leder till val av eget lösenord. Lösenord skickas aldrig i mejlet. Detta gäller skapande via volontärprofil, separat kontoregistrering och CSV-import samt första inloggningskontot för en tidigare profil. Befintliga konton, automatiska katthemskopplingar och exempelkonton får inga välkomstmejl vid uppgradering. Ordinarie lösenordsåterställning gäller fortfarande i 30 minuter.
+
+Utskicket köas i samma databastransaktion som kontot och överlever omstart. Aktiverad e-post och rätt publik portaladress behövs; utan fungerande e-post visas väntande status. Högst tio mejl behandlas per körning; bakgrunden kör varje minut. Vid fel görs högst sex försök med fem minuters mellanrum. Token lagras bara som hash. Kontot kvarstår om mejltjänsten är tillfälligt otillgänglig. Lokala testadresser och interna kopplingsadresser får inga mejl.
+
+Admin/SA ser status under **Volontärer → Visa profil → Kontohantering** och kan välja **Skicka ny inbjudan** för nya konton som ännu inte valt eget lösenord, enligt ordinarie behörighetsregler. Inga mejl eller lösenordslänkar visas i profilsvaren. Avstängda konton får inga utskick. En utgången länk kan ersättas via Glömt lösenord eller en ny inbjudan.
+
+Det befintliga registreringsformulärets tillfälliga lösenord finns kvar som reserv. Volontären behöver inte få detta om välkomstmejlets länk används. Det är inte möjligt att välja lösenord enbart genom att känna till någon annans e-postadress.

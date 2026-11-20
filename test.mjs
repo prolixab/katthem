@@ -37,8 +37,8 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
  const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');assert.equal((await call('password','POST',{current:'Password12345',password:'OwnAdminPassword12345'},newAdminCookie)).status,200);
  const activityConfig=(await(await call('state','GET',null,ac)).json()).activity_settings;assert.equal(activityConfig.inactive_days,30);
- assert.equal((await call('activity-settings','PUT',{inactive_days:45,revision:activityConfig.revision},vc)).status,403);
- const activitySaved=await call('activity-settings','PUT',{inactive_days:45,revision:activityConfig.revision},newAdminCookie);assert.equal(activitySaved.status,200);assert.equal((await activitySaved.json()).activity_settings.inactive_days,45);
+ assert.equal((await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},vc)).status,403);
+ const activitySaved=await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},newAdminCookie);assert.equal(activitySaved.status,200);assert.equal((await activitySaved.json()).activity_settings.inactive_days,60);
  assert.equal((await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},ac)).status,409);
  assert.equal((await call('activity-settings','PUT',{inactive_days:30,revision:activityConfig.revision+1},ac)).status,200);
  // Shift routines are editable by admin and SA; volunteer writes and stale updates fail.
@@ -338,7 +338,7 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const unified={...memberPayload,name:'Gemensam volontär',email:'unified@example.se',board_role:'none',member_number:'UNIFIED',account:{role:'volunteer',password:'UnifiedPassword123',active:true,green:true}};
  assert.equal((await call('volunteers','POST',unified,vc)).status,403);
  assert.equal((await call('volunteers','POST',{...unified,board_role:'member'},newAdminCookie)).status,403);
- const unifiedResponse=await call('volunteers','POST',unified,newAdminCookie);assert.equal(unifiedResponse.status,200);const unifiedState=await unifiedResponse.json(),unifiedProfile=unifiedState.members.find(m=>m.email===unified.email);assert.ok(unifiedProfile.user_id);assert.ok(unifiedState.users.some(u=>u.id===unifiedProfile.user_id&&u.name===unified.name));assert.ok(!JSON.stringify(unifiedState).includes('UnifiedPassword123'));
+ const unifiedResponse=await call('volunteers','POST',unified,newAdminCookie);assert.equal(unifiedResponse.status,200);const unifiedState=await unifiedResponse.json(),unifiedProfile=unifiedState.members.find(m=>m.email===unified.email);assert.ok(unifiedProfile.user_id);assert.ok(unifiedState.users.some(u=>u.id===unifiedProfile.user_id&&u.name===unified.name));assert.equal(unifiedState.users.find(u=>u.id===unifiedProfile.user_id).welcome_email.state,'pending');assert.equal((await call('users/'+unifiedProfile.user_id+'/welcome','POST',{},vc)).status,403);assert.equal((await call('users/'+unifiedProfile.user_id+'/welcome','POST',{},newAdminCookie)).status,200);assert.equal((await call('users/'+superState.user.id+'/welcome','POST',{},ac)).status,400);assert.ok(!JSON.stringify(unifiedState).includes('UnifiedPassword123'));
  assert.equal((await call('volunteers/'+unifiedProfile.id,'PUT',{...unified,revision:unifiedProfile.revision,phone:'070999',account:{...unified.account,password:''}},newAdminCookie)).status,200);
  assert.equal((await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision+1},vc)).status,403);
  assert.equal((await call('news/'+bulletinItem.id,'DELETE',{revision:bulletinItem.revision},ac)).status,409);
@@ -609,7 +609,10 @@ test('Uppföljningsgräns: standard 30, lokalt sparande, revisionsskydd och omr�
  const db=new DatabaseSync(':memory:'),other=new DatabaseSync(':memory:');try{
  const settings=createActivitySettings(db);assert.equal(settings.get().inactive_days,30);assert.equal(createActivitySettings(other).get().inactive_days,30);
  const now=new Date('2030-01-31T12:00:00Z'),last=now.getTime()-40*86400000,user={role:'volunteer',active:1,created_at:last};assert.equal(isInactive(user,last,now,settings.get().inactive_days),true);
- settings.save({inactive_days:45,revision:0});assert.equal(createActivitySettings(db).get().inactive_days,45);assert.equal(isInactive(user,last,now,settings.get().inactive_days),false);assert.equal(createActivitySettings(other).get().inactive_days,30);
- assert.throws(()=>settings.save({inactive_days:20,revision:0}),{status:409});for(const inactive_days of [0,366,1.5,'30'])assert.throws(()=>settings.save({inactive_days,revision:1}),{status:400});
+ settings.save({inactive_days:60,revision:0});assert.equal(createActivitySettings(db).get().inactive_days,60);assert.equal(isInactive(user,last,now,settings.get().inactive_days),false);assert.equal(createActivitySettings(other).get().inactive_days,30);
+ assert.throws(()=>settings.save({inactive_days:90,revision:0}),{status:409});for(const inactive_days of [0,20,45,91,366,1.5,'30'])assert.throws(()=>settings.save({inactive_days,revision:1}),{status:400});
  }finally{db.close();other.close()}
 });
+
+
+test('Uppföljning: äldre gränser anpassas en gång till fasta alternativ',()=>{const db=new DatabaseSync(':memory:');try{createActivitySettings(db);for(const [before,after] of [[15,30],[45,60],[75,90],[120,90]]){db.prepare('UPDATE activity_settings SET inactive_days=?,revision=0').run(before);assert.deepEqual({...createActivitySettings(db).get()},{inactive_days:after,revision:1});assert.equal(createActivitySettings(db).get().revision,1)}for(const days of [30,60,90]){db.prepare('UPDATE activity_settings SET inactive_days=?,revision=7').run(days);assert.deepEqual({...createActivitySettings(db).get()},{inactive_days:days,revision:7})}}finally{db.close()}});

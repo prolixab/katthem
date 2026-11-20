@@ -1,3 +1,4 @@
+export function canonicalShelterName(value){const name=String(value||'').trim();return /^(?:huskvarna\s*\/\s*j[oö]nk[oö]ping|j[oö]nk[oö]ping(?:\s*\/\s*huskvarna)?)$/i.test(name)?'Huskvarna':name}
 export function resolveShelter(station,location,door){
  const normalized=String(station||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
  const recognized=!normalized||/(^|[^a-z])(huskvarna|jonkoping)(?=$|[^a-z])/.test(normalized);

@@ -47,7 +47,7 @@ const portalRegistry=process.env.PORTAL_REGISTRY_PATH?new DatabaseSync(process.e
 portalRegistry?.exec('PRAGMA busy_timeout=5000');
 const currentShelterName=()=>portalRegistry?.prepare('SELECT name FROM shelters WHERE id=?').get(process.env.PORTAL_SHELTER_ID)?.name||process.env.PORTAL_SHELTER_NAME||'Katthemmet';
 const members=createMembers(db);
-const volunteers=createVolunteers(db,members,hash);
+const volunteers=createVolunteers(db,members,hash,{onCreated:id=>passwordReset.enqueueWelcome(id)});
 const news=createNews(db);
 const bookingSettings=createBookingSettings(db);
 const recurring=createRecurringBookings(db,{recommendedLimit:()=>bookingSettings.get().recommended_limit});
@@ -178,7 +178,7 @@ function completedCounts(userId){
  return counts;
 }
 function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return checklist.idsFor(uid).every(id=>checked.has(id))}
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
 function pendingIntroductions(user){
  if(!isAdmin(user))return undefined;
@@ -387,7 +387,7 @@ const server=http.createServer(async(req,res)=>{
   const result=db.prepare('UPDATE door_access SET code=?,revision=revision+1,updated_at=? WHERE id=1 AND revision=?').run(p.code.trim(),Date.now(),p.revision);
   if(!result.changes)fail('Dörrkoden har ändrats av någon annan. Ladda om sidan innan du sparar.',409);return send(snapshot(user));
  }
- if((url.pathname==='/api/volunteers'&&req.method==='POST')||(/^\/api\/volunteers\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);if(process.env.PORTAL_SHELTER_ID)p.shelter=currentShelterName();volunteers.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p,user);return send(snapshot(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)))}
+ if((url.pathname==='/api/volunteers'&&req.method==='POST')||(/^\/api\/volunteers\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);if(process.env.PORTAL_SHELTER_ID)p.shelter=currentShelterName();volunteers.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p,user);void passwordReset.runWelcome().catch(()=>{});return send(snapshot(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)))}
  if((url.pathname==='/api/members'&&req.method==='POST')||(/^\/api\/members\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req),id=req.method==='POST'?null:Number(url.pathname.split('/').pop()),existing=id===null?null:members.list().find(m=>m.id===id);
  const accountIds=new Set([existing?.user_id,p.user_id].filter(id=>id!==null&&id!==undefined));
  for(const accountId of accountIds){const target=db.prepare('SELECT * FROM users WHERE id=?').get(accountId);if(target&&!canManageAccount(user,target)&&(p.name!==target.name||p.email?.toLowerCase()!==target.email.toLowerCase()||p.user_id!==undefined&&p.user_id!==existing?.user_id))fail('Endast superadmin får ändra eller koppla om administratörers kontouppgifter.',403)}
@@ -407,6 +407,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/export'&&req.method==='GET'){
  const rows=db.prepare("SELECT s.date,s.start,s.end,s.title,CASE WHEN s.cancelled=1 THEN 'Inställt' ELSE 'Aktivt' END status,u.name,u.email FROM slots s LEFT JOIN bookings b ON b.slot_id=s.id LEFT JOIN users u ON u.id=b.user_id ORDER BY s.date,s.start").all();
  const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="katthem-schema.csv"','Cache-Control':'no-store'});return res.end('\uFEFF'+[['Datum','Start','Slut','Pass','Status','Namn','E-post'],...rows.map(Object.values)].map(r=>r.map(cell).join(';')).join('\r\n'));}
+ if(/^\/api\/users\/\d+\/welcome$/.test(url.pathname)&&req.method==='POST'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT id,role FROM users WHERE id=?').get(id);if(!target)fail('Kontot finns inte.',404);if(!canManageAccount(user,target))fail('Endast superadmin får hantera administratörers inbjudningar.',403);passwordReset.retryWelcome(id);void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user))}
  if(/^\/api\/users\/\d+\/password$/.test(url.pathname)&&req.method==='POST'){
   const id=Number(url.pathname.split('/')[3]),p=await body(req);
   if(id===user.id)fail('Byt ditt eget lösenord under Mitt konto.');
@@ -417,14 +418,14 @@ const server=http.createServer(async(req,res)=>{
   return send(snapshot(user));
  }
  if(url.pathname==='/api/users'&&req.method==='POST'){const p=await body(req);if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Ange namn, giltig e-post och lösenord med 10–200 tecken.');if(db.prepare('SELECT id FROM users WHERE email=?').get(p.email.trim().toLowerCase()))fail('E-postadressen finns redan.');if(p.role!==undefined&&!['superadmin','admin','volunteer'].includes(p.role))fail('Ogiltig roll.');if((p.role||'volunteer')!=='volunteer'&&!isSuperAdmin(user))fail('Endast superadmin får skapa administratörskonton.',403);if(p.member_id!==undefined){if(!Number.isInteger(p.member_id)||!Number.isInteger(p.member_revision))fail('Öppna medlemsprofilen igen.');const profile=db.prepare('SELECT user_id,revision FROM member_profiles WHERE id=?').get(p.member_id);if(!profile)fail('Medlemmen finns inte.',404);if(profile.user_id!==null||profile.revision!==p.member_revision)fail('Medlemsprofilen har ändrats. Öppna den igen.',409);if(db.prepare('SELECT id FROM member_profiles WHERE lower(trim(email))=lower(trim(?)) AND id<>?').get(p.email,p.member_id))fail('E-postadressen finns på en annan medlemsprofil.');}
- const passwordHash=hash(p.password);db.exec('BEGIN IMMEDIATE');try{const result=db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),passwordHash,p.role||'volunteer',Date.now());if(p.member_id!==undefined){const updated=db.prepare('UPDATE member_profiles SET user_id=?,name=?,email=?,revision=revision+1,updated_at=? WHERE id=? AND user_id IS NULL AND revision=?').run(Number(result.lastInsertRowid),p.name.trim(),p.email.trim().toLowerCase(),Date.now(),p.member_id,p.member_revision);if(updated.changes!==1)fail('Medlemsprofilen har ändrats. Öppna den igen.',409)}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}return send(snapshot(user));}
+ const passwordHash=hash(p.password);db.exec('BEGIN IMMEDIATE');try{const result=db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),passwordHash,p.role||'volunteer',Date.now());if(p.member_id!==undefined){const updated=db.prepare('UPDATE member_profiles SET user_id=?,name=?,email=?,revision=revision+1,updated_at=? WHERE id=? AND user_id IS NULL AND revision=?').run(Number(result.lastInsertRowid),p.name.trim(),p.email.trim().toLowerCase(),Date.now(),p.member_id,p.member_revision);if(updated.changes!==1)fail('Medlemsprofilen har ändrats. Öppna den igen.',409)}passwordReset.enqueueWelcome(Number(result.lastInsertRowid));db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user));}
 
  if(['/api/users/import-preview','/api/users/import'].includes(url.pathname)&&req.method==='POST'){
   const p=await body(req,1000000),entries=importEntries(p);
   if(url.pathname.endsWith('import-preview'))return send({users:entries.map(({name,email,green})=>({name,email,green}))});
   const prepared=entries.map(e=>({...e,passwordHash:hash(e.password)}));
-  db.exec('BEGIN IMMEDIATE');try{const insert=db.prepare('INSERT INTO users(name,email,password,green_manual,created_at) VALUES(?,?,?,?,?)');for(const e of prepared)insert.run(e.name,e.email,e.passwordHash,e.green?1:0,Date.now());db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
-  return send(snapshot(user));
+  db.exec('BEGIN IMMEDIATE');try{const insert=db.prepare('INSERT INTO users(name,email,password,green_manual,created_at) VALUES(?,?,?,?,?)');for(const e of prepared){const result=insert.run(e.name,e.email,e.passwordHash,e.green?1:0,Date.now());passwordReset.enqueueWelcome(Number(result.lastInsertRowid))}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
+  void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user));
  }
  if(url.pathname.startsWith('/api/users/')&&req.method==='PATCH'){
   const id=Number(url.pathname.split('/').pop()),p=await body(req),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);
@@ -481,11 +482,11 @@ const server=http.createServer(async(req,res)=>{
  res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.png')?'image/png':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.',code:e.status?e.code:undefined},e.status||500)}
 });
-async function maintenance(){presence.purge();schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run()])}
+async function maintenance(){presence.purge();schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run(),passwordReset.runWelcome()])}
 const reminderTimer=setInterval(()=>maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.')),60000);reminderTimer.unref();
 maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.'));
 server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Katthemmet: http://${host}:${server.address().port}`));
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{
- clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain()]);for(const source of ageSourceDatabases.values())source.close();portalRegistry?.close();db.close();process.exit(0)});
+ clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain(),passwordReset.drainWelcome()]);for(const source of ageSourceDatabases.values())source.close();portalRegistry?.close();db.close();process.exit(0)});
  setTimeout(()=>process.exit(1),10000).unref();
 });

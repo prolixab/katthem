@@ -8,9 +8,10 @@ export function isInactive(user,lastCompleted,now=new Date(),days=30){
 
 export function createActivitySettings(db){
  db.exec('CREATE TABLE IF NOT EXISTS activity_settings(id INTEGER PRIMARY KEY CHECK(id=1),inactive_days INTEGER NOT NULL DEFAULT 30 CHECK(inactive_days BETWEEN 1 AND 365),revision INTEGER NOT NULL DEFAULT 0);INSERT OR IGNORE INTO activity_settings(id) VALUES(1)');
+ db.exec('UPDATE activity_settings SET inactive_days=CASE WHEN inactive_days<=30 THEN 30 WHEN inactive_days<=60 THEN 60 ELSE 90 END,revision=revision+1 WHERE inactive_days NOT IN (30,60,90)');
  const get=()=>db.prepare('SELECT inactive_days,revision FROM activity_settings WHERE id=1').get();
  function save(p){
-  if(!p||Object.keys(p).some(k=>!['inactive_days','revision'].includes(k))||!Number.isInteger(p.inactive_days)||p.inactive_days<1||p.inactive_days>365||!Number.isInteger(p.revision))throw Object.assign(Error('Ange ett heltal mellan 1 och 365 dagar.'),{status:400});
+  if(!p||Object.keys(p).some(k=>!['inactive_days','revision'].includes(k))||![30,60,90].includes(p.inactive_days)||!Number.isInteger(p.revision))throw Object.assign(Error('Välj 30, 60 eller 90 dagar.'),{status:400});
   const result=db.prepare('UPDATE activity_settings SET inactive_days=?,revision=revision+1 WHERE id=1 AND revision=?').run(p.inactive_days,p.revision);
   if(!result.changes)throw Object.assign(Error('Uppföljningsgränsen har ändrats av någon annan. Uppdatera sidan innan du sparar.'),{status:409});return get();
  }
