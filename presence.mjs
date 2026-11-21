@@ -1,3 +1,9 @@
+export function updatePresenceSettings(db,schema,enabled,revision){
+ const result=db.prepare('UPDATE '+schema+'.presence_settings SET enabled=?,revision=revision+1 WHERE id=1 AND revision=?').run(Number(enabled),revision);
+ if(!result.changes)throw Object.assign(Error('Modulens inställning har ändrats. Uppdatera sidan och försök igen.'),{status:409});
+ if(!enabled)db.exec('DELETE FROM '+schema+'.presence_confirmations;DELETE FROM '+schema+'.presence_last');
+}
+
 export const presenceModule=Object.freeze({id:'presence',version:3,title:'Närvarobekräftelse',defaultEnabled:false,transientTables:Object.freeze(['presence_confirmations','presence_last'])});
 export function createPresence(db,{now=()=>new Date(),canConfirm=uid=>Boolean(db.prepare('SELECT active FROM users WHERE id=?').get(uid)?.active)}={}){
  const fail=(message,status=400,code)=>{throw Object.assign(Error(message),{status,code})};
@@ -15,7 +21,12 @@ export function createPresence(db,{now=()=>new Date(),canConfirm=uid=>Boolean(db
  function purge(){const day=today();db.prepare("DELETE FROM presence_confirmations WHERE day<>? OR (booking_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.id=presence_confirmations.booking_id AND s.date=presence_confirmations.day AND s.cancelled=0))").run(day)}
  function configure(p){
   if(!p||Object.keys(p).some(k=>!['enabled','revision'].includes(k))||typeof p.enabled!=='boolean'||!Number.isInteger(p.revision))fail('Välj aktivering och öppna inställningen igen.');
-  db.exec('BEGIN IMMEDIATE');try{const result=db.prepare('UPDATE presence_settings SET enabled=?,revision=revision+1 WHERE id=1 AND revision=?').run(Number(p.enabled),p.revision);if(!result.changes)fail('Modulens inställning har ändrats. Uppdatera sidan och försök igen.',409);if(!p.enabled)db.exec('DELETE FROM presence_confirmations;DELETE FROM presence_last');db.exec('COMMIT');return settings()}catch(error){db.exec('ROLLBACK');throw error}
+  db.exec('BEGIN IMMEDIATE');
+  try{
+   updatePresenceSettings(db,'main',p.enabled,p.revision);
+   db.exec('COMMIT');
+   return settings();
+  }catch(error){db.exec('ROLLBACK');throw error}
  }
  function snapshot(uid,{manage=false}={}){
   const config=settings();if(!config.enabled)return {enabled:false,...(manage?{settings:config}:{})};purge();const day=today();

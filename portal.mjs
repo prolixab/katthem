@@ -6,7 +6,10 @@ import {calendarEvents} from './calendar.mjs';
 import {createBackups} from './backups.mjs';
 import {createAudit} from './audit.mjs';
 import {requiresPasswordChange} from './password-policy.mjs';
-import {contrast,createBranding,readBranding} from './branding.mjs';
+import {contrast,createBranding,readBranding,updateBranding,validateBranding} from './branding.mjs';
+import {updatePresenceSettings} from './presence.mjs';
+import {createEmailSettings,emailSettingsStore} from './email-settings.mjs';
+import {updateShelterSettings} from './shared-settings.mjs';
 import {createPortalEngagement} from './portal-engagement.mjs';
 import {createPortalNews} from './portal-news.mjs';
 import {createVolunteerTransfers} from './volunteer-transfer.mjs';
@@ -68,7 +71,15 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   return {...session,user,global:session.source===primary&&user.role==='superadmin'};
  }
  function access(p,target){const localId=target===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.local_id;if(localId&&workers.get(target)?.db.prepare("SELECT 1 FROM engagements WHERE user_id=? AND status='purged'").get(localId))return null;if(p.global)return 'superadmin';if(p.source===target)return p.user.role;return registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target)?.role||null}
- function metadata(p,selected){const own_shelters=houses().filter(h=>access(p,h.id)).map(h=>{const role=access(p,h.id),member=h.id===p.source||Boolean(registry.prepare('SELECT 1 FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,h.id)),localId=h.id===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,h.id)?.local_id;const row=member&&localId?workers.get(h.id)?.db.prepare('SELECT u.active,e.status FROM users u LEFT JOIN engagements e ON e.user_id=u.id WHERE u.id=?').get(localId):null;return {id:h.id,name:h.name,role,member,status:member?(row?.status||(row?row.active?'active':'inactive':null)):null}});return {own_shelters,selected,global_superadmin:p.global,can_transfer:houses().filter(h=>['admin','superadmin'].includes(access(p,h.id))).length>=2,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
+ function settingsHomes(p){return houses().filter(home=>access(p,home.id)==='superadmin')}
+ function settingsRevisions(p){
+  return settingsHomes(p).map(({id,name})=>{
+   const db=workers.get(id)?.db;
+   if(!db)return {id,name};
+   return {id,name,branding:readBranding(db).revision,presence:db.prepare('SELECT revision FROM presence_settings WHERE id=1').get().revision,email:emailSettingsStore(db).revision()};
+  });
+ }
+ function metadata(p,selected){const own_shelters=houses().filter(h=>access(p,h.id)).map(h=>{const role=access(p,h.id),member=h.id===p.source||Boolean(registry.prepare('SELECT 1 FROM grants WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,h.id)),localId=h.id===p.source?p.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,h.id)?.local_id;const row=member&&localId?workers.get(h.id)?.db.prepare('SELECT u.active,e.status FROM users u LEFT JOIN engagements e ON e.user_id=u.id WHERE u.id=?').get(localId):null;return {id:h.id,name:h.name,role,member,status:member?(row?.status||(row?row.active?'active':'inactive':null)):null}});return {own_shelters,selected,global_superadmin:p.global,...(p.global?{settings_homes:settingsRevisions(p)}:{}),can_transfer:houses().filter(h=>['admin','superadmin'].includes(access(p,h.id))).length>=2,shelters:houses().filter(h=>access(p,h.id)).map(h=>({id:h.id,name:h.name}))}}
  async function ensureShadow(p,target,role){
   const w=await worker(target);let shadow=registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(p.source,p.user_id,target);
   if(!shadow){const email=w.db.prepare('SELECT 1 FROM users WHERE email=?').get(p.user.email)?'portal-'+randomBytes(16).toString('hex')+'@access.invalid':p.user.email;const salt=randomBytes(16).toString('hex'),password=salt+':'+scryptSync(randomBytes(32).toString('hex'),salt,64).toString('hex');const id=Number(w.db.prepare('INSERT INTO users(name,email,password,role,active,created_at) VALUES(?,?,?,?,1,?)').run(p.user.name,email,password,role,Date.now()).lastInsertRowid);registry.prepare('INSERT INTO shadows VALUES(?,?,?,?)').run(p.source,p.user_id,target,id);registry.prepare('DELETE FROM shadow_profile_sync WHERE source=? AND user_id=? AND target=?').run(p.source,p.user_id,target);shadow={local_id:id}}
@@ -226,6 +237,28 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     return send({entries:audit.list(target).map(entry=>({...entry,actor_name:workers.get(entry.actor_home)?.db.prepare('SELECT name FROM users WHERE id=?').get(entry.actor_id)?.name||'Tidigare administratör'}))});
    }else if(url.pathname.startsWith('/api/portal/manage')){
     if(!p)fail('Logga in för att fortsätta.',401);if(!p.global)fail('Endast superadmin kan hantera katthem och åtkomst.',403);
+    const sharedSetting=url.pathname.match(/^[/]api[/]portal[/]manage[/]shared-settings[/](branding|presence|email)$/)?.[1];
+    if(sharedSetting){
+     if(req.method!=='PUT')fail('Metoden stöds inte.',405);
+     const homes=settingsHomes(p);
+     if(homes.length<2)fail('Gemensam sparning kräver åtkomst till minst två katthem.',403);
+     const {values,revisions}=json(payload)||{};
+     if(!revisions||Object.keys(revisions).length!==homes.length||!homes.every(home=>Object.hasOwn(revisions,home.id)&&Number.isSafeInteger(revisions[home.id])))fail('Listan över katthem har ändrats. Uppdatera sidan och försök igen.',409);
+     if(sharedSetting==='branding')validateBranding(values);
+     if(sharedSetting==='presence'&&typeof values?.enabled!=='boolean')fail('Välj om modulen ska vara aktiverad.');
+     await Promise.all(homes.map(home=>worker(home.id)));
+     updateShelterSettings(registry,homes.map(({id})=>({id,path:path.join(folder(id),'katthem.sqlite'),revision:revisions[id]})),({id,schema,revision})=>{
+      if(sharedSetting==='branding')updateBranding(registry,schema,values,revision);
+      if(sharedSetting==='presence')updatePresenceSettings(registry,schema,values.enabled,revision);
+      if(sharedSetting==='email'){
+       const store=emailSettingsStore(registry,schema);
+       if(store.revision()!==revision)fail('E-postinställningarna har ändrats. Öppna dialogen igen.',409);
+       createEmailSettings({store,dataDir:folder(id),production:env.NODE_ENV==='production'}).save({...values,revision});
+      }
+      audit.record({home:id,actor:p,action:sharedSetting==='presence'?(values.enabled?'module.presence.enabled':'module.presence.disabled'):sharedSetting+'.shared_saved'});
+     });
+     return send({ok:true});
+    }
     const backupDownload=url.pathname.match(/^\/api\/portal\/manage\/backups\/(backup-\d{13}-[a-f0-9]{12})\/download$/);
     if(backupDownload&&req.method==='GET'){
      let archive;try{archive=await backups.download(backupDownload[1])}catch(error){fail(error.status?error.message:'Säkerhetskopian kunde inte kontrolleras och förberedas för nedladdning.',error.status||503)}

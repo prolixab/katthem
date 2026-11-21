@@ -597,3 +597,12 @@ Det befintliga registreringsformulärets tillfälliga lösenord finns kvar som r
 ## Grafisk profil på det publika veckoschemat (0.6.042)
 
 Visningssidan följer valt katthems sparade färger och uppladdade logotyp från Administration → Grafisk profil. En profiländring hämtas automatiskt med schemat. Passkorten har rundade hörn och färgad överkant som i portalen. Röda bemanningsvarningar har en egen statusfärg. På breda skärmar visas sju dagar sida vid sida med större text för läsning på avstånd.
+
+
+## Spara inställningar för båda katthemmen (0.6.043)
+
+Superadmin kan välja gemensam sparning i Grafisk profil, Moduler → Närvarobekräftelse och E-postinställningar. Formuläret visar vilka katthem som omfattas. Standardvalet är det katthem du arbetar i. Vid en samtidig ändring behöver du öppna inställningarna på nytt innan du sparar gemensamt.
+
+- Grafisk profil sparar färgerna och logotypen på de angivna katthemmen.
+- Närvaromodulen får samma av/på-inställning på katthemmen. Vid avstängning rensas dagens bekräftelser och senaste närvarodatum för de katthem som omfattas.
+- E-post sparar Gmail-adress, portaladress, e-postaktivering samt mottagare och intervall för schemalagda CSV-exporter. CSV-exporterna från båda hemmen går till Gmail-adressen i formuläret. Om adressen är ny på något av hemmen behöver du ange applösenordet. Ett tomt lösenordsfält bevarar det sparade lösenordet för samma adress på respektive hem. Varje hem har sitt eget utskicksschema och exportunderlag.

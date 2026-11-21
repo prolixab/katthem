@@ -51,7 +51,7 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const publicBefore=await displayGet();assert.equal(publicBefore.status,200);assert.equal((await publicBefore.json()).device_registered,false);
   const securityFields={enabled:true,revision:1,device_revision:0};assert.equal((await call('portal/display/security','PUT',securityFields,board.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,vol.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,sa.cookie)).status,200);
   assert.equal((await displayGet()).status,403);await approveDevice(displayKey);assert.equal((await fetch(base+'/api/display?shelter=huskvarna',{headers:{'X-Display-Key':displayKey}})).status,403);
-  const visible=await displayGet();assert.equal(visible.status,200);assert.equal(visible.headers.get('cache-control'),'no-store');assert.equal(visible.headers.get('set-cookie'),null);const viewOnly=await visible.json();assert.equal(viewOnly.days.length,7);assert.equal(viewOnly.show_names,false);assert.equal(viewOnly.presence,null);for(const field of ['user','users','bookings','door_code','members','contacts','news','branding'])assert.equal(viewOnly[field],undefined);
+  const visible=await displayGet();assert.equal(visible.status,200);assert.equal(visible.headers.get('cache-control'),'no-store');assert.equal(visible.headers.get('set-cookie'),null);const viewOnly=await visible.json();assert.equal(viewOnly.days.length,7);assert.equal(viewOnly.show_names,false);assert.equal(viewOnly.presence,null);for(const field of ['user','users','bookings','door_code','members','contacts','news'])assert.equal(viewOnly[field],undefined);assert.equal(viewOnly.branding.primary,'#244e43');
   assert.equal((await fetch(base+'/api/display/confirm?shelter=huskvarna',{method:'POST',headers:{'content-type':'application/json','X-Display-Key':displayKey},body:JSON.stringify({choice:'a'.repeat(64)})})).status,403);
   assert.equal((await displayGet(b)).status,404);assert.equal((await displayGet('huskvarna','POST')).status,405);assert.equal((await displayGet('huskvarna','GET','bad')).status,404);
   for(const route of ['state','portal/manage','export','profile'])assert.equal((await fetch(base+'/api/'+route,{headers:{'X-Display-Key':displayKey}})).status,401);
@@ -261,6 +261,37 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await call(renameRoute,'PATCH',{name:'Förlorad ändring',previous_name:oldName},sa.cookie)).status,409);
   const savedProfile=await call('volunteers','POST',{...form,name:'Efter namnbyte',email:'after-rename@example.se'},sa.cookie,b);assert.equal(savedProfile.status,200);
   const renamedDb=new DatabaseSync(path.join(dir,'shelters',b,'katthem.sqlite'));assert.equal(renamedDb.prepare('SELECT shelter FROM member_profiles WHERE email=?').get('after-rename@example.se').shelter,newName);renamedDb.close();
+  const sharedState=async()=>(await(await call('state','GET',null,sa.cookie,'huskvarna')).json()).portal.settings_homes;
+  const sharedRevisions=async setting=>Object.fromEntries((await sharedState()).map(home=>[home.id,home[setting]]));
+  const shared=(setting,values,revisions,cookie=sa.cookie)=>call('portal/manage/shared-settings/'+setting,'PUT',{values,revisions},cookie);
+  const branding=await(await call('branding','GET',null,sa.cookie,'huskvarna')).json();
+  const brandingValues={...branding,primary:'#012a5e'};
+  const brandingRevisions=await sharedRevisions('branding');
+  assert.equal((await shared('branding',brandingValues,brandingRevisions,board.cookie)).status,403);
+  assert.equal((await shared('branding',brandingValues,{...brandingRevisions,[b]:999})).status,409);
+  assert.deepEqual(await sharedRevisions('branding'),brandingRevisions);
+  assert.equal((await shared('branding',brandingValues,brandingRevisions)).status,200);
+  for(const home of ['huskvarna',b])assert.equal((await(await call('branding','GET',null,sa.cookie,home)).json()).primary,'#012a5e');
+
+  assert.equal((await shared('presence',{enabled:true},await sharedRevisions('presence'))).status,200);
+  for(const home of ['huskvarna',b])assert.equal((await(await call('state','GET',null,sa.cookie,home)).json()).modules.presence.enabled,true);
+  assert.equal((await shared('presence',{enabled:false},await sharedRevisions('presence'))).status,200);
+  for(const home of ['huskvarna',b])assert.equal((await(await call('state','GET',null,sa.cookie,home)).json()).modules.presence.enabled,false);
+
+  const mail={gmail_address:'shared@gmail.com',app_password:'abcdefghijklmnop',app_url:base,enabled:true,csv_enabled:true,csv_interval:'monthly'};
+  const mailRevisions=await sharedRevisions('email');
+  assert.equal((await shared('email',mail,{...mailRevisions,[b]:999})).status,409);
+  assert.deepEqual(await sharedRevisions('email'),mailRevisions);
+  const mailSave=await shared('email',mail,mailRevisions);
+  assert.equal(mailSave.status,200,await mailSave.text());
+  for(const home of ['huskvarna',b]){
+   const config=await(await call('email-settings','GET',null,sa.cookie,home)).json();
+   assert.equal(config.gmail_address,mail.gmail_address);
+   assert.equal(config.csv_interval,'monthly');
+   assert.equal(config.csv_export_status.enabled,true);
+   assert.equal(config.password_saved,true);
+   assert.equal(config.app_password,undefined);
+  }
   await portal.close();portal=null;portal=await createPortal({dataDir:dir,port:Number(new URL(base).port),env:{...process.env,NODE_ENV:'test',APP_URL:'',RESEND_API_KEY:'',EMAIL_FROM:'',BOOTSTRAP_SUPERADMIN_EMAIL:''}});
   assert.equal((await(await call('portal')).json()).shelters.find(h=>h.id===b).name,newName);assert.equal((await(await call('state','GET',null,sa.cookie,b)).json()).shelter_admin.name,newName);
   // Operational tools are scoped and privileged; failed writes never enter the audit history.

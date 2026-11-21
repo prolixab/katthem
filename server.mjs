@@ -19,7 +19,7 @@ import http from 'node:http';
 import {createMembers} from './members.mjs';
 import { isAdmin,isSuperAdmin,canManageAccount,isGreen } from './roles.mjs';
 import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
-import { createEmailSettings } from './email-settings.mjs';
+import { createEmailSettings, emailSettingsStore } from './email-settings.mjs';
 import { isInactive,createActivitySettings } from './activity.mjs';
 import { createReminders } from './reminders.mjs';
 import { parseVolunteersCsv } from './csv-import.mjs';
@@ -135,7 +135,9 @@ if(!process.env.EMPTY_SHELTER&&!db.prepare('SELECT name FROM migrations WHERE na
  db.prepare('INSERT INTO migrations VALUES(?)').run('superadmin-daniel-20261024');db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e}
 }
-const emailSettings=createEmailSettings({dataDir,defaultUrl:appOrigin||process.env.PORTAL_PUBLIC_URL||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
+db.exec('CREATE TABLE IF NOT EXISTS gmail_settings(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL,revision INTEGER NOT NULL)');
+const emailStore=emailSettingsStore(db);
+const emailSettings=createEmailSettings({store:emailStore,dataDir,defaultUrl:appOrigin||process.env.PORTAL_PUBLIC_URL||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
 if(process.env.PORTAL_SHELTER_ID){const baseAppUrl=emailSettings.appUrl;emailSettings.appUrl=()=>{const u=new URL(baseAppUrl());u.searchParams.set('shelter',process.env.PORTAL_SHELTER_ID);return u.href.replace(/\/$/,'')}}
 const reminders=createReminders(db,{mailProvider:emailSettings});
 const csvExports=createCsvExports(db,emailSettings);
@@ -399,8 +401,8 @@ const server=http.createServer(async(req,res)=>{
   db.prepare('UPDATE volunteer_info SET location=? WHERE id=1').run(...fields.map(k=>p[k].trim()));return send(snapshot(user));
  }
  if(url.pathname.startsWith('/api/email-settings')&&!isSuperAdmin(user))fail('Endast superadmin får hantera e-postinställningar.',403);
- if(url.pathname==='/api/email-settings'&&req.method==='GET')return send({...emailSettings.settings(),csv_export_status:csvExports.status()});
- if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);emailSettings.save(p);csvExports.configure();return send({...emailSettings.settings(),csv_export_status:csvExports.status()})}
+ if(url.pathname==='/api/email-settings'&&req.method==='GET')return send({...emailSettings.settings(),revision:emailStore.revision(),csv_export_status:csvExports.status()});
+ if(url.pathname==='/api/email-settings'&&req.method==='PUT'){const p=await body(req);emailSettings.save(p);csvExports.configure();return send({...emailSettings.settings(),revision:emailStore.revision(),csv_export_status:csvExports.status()})}
  if(url.pathname==='/api/email-settings/csv-send'&&req.method==='POST')return send(await csvExports.run({force:true}));
  if(url.pathname==='/api/email-settings/test'&&req.method==='POST'){const p=await body(req);return send(await emailSettings.test(p.to))}
  if(url.pathname==='/api/reminders/send'&&req.method==='POST'){if(!reminders.status().configured)fail('E-post är inte konfigurerad. Öppna E-postinställningar i Administration.',503);const result=await reminders.run();return send({...snapshot(user),reminder_result:result})}
