@@ -545,7 +545,7 @@ Portalens ursprungliga gröna färger behålls som grundstandard. Egna färger o
 
 Djurens Vänners blå profil använder **RGB 1, 42, 94 / #012A5E**, ljus bakgrund och vita ytor. Admin eller superadmin kan välja **Administration → Grafisk profil → Djurens Vänner – blå profil**, förhandsgranska och spara. Profilvalet behåller uppladdad logotyp och gäller bara valt katthem. **Återställ grön grundstandard** återställer ursprungliga färger och standardlogotyp. Huskvarnas befintliga sparade blå huvudfärg fungerar även utan att en ny profil väljs.
 
-Huvudfärgen används på knappar, rubriker, menyval och länkar. Röda bemanningsvarningar och gröna statusmarkeringar är oberoende av profilfärgen. Ett eget underbemannat pass har röd bakgrund och separat grön text för den egna bokningen; vanliga egna bokningar har ljusgrön bakgrund. Visningsskärmen behåller sin befintliga profil och får rubriken Incheckning ovanför QR-koden. Incheckningens säkerhetsregler och möjlighet till avstängning är oförändrade.
+Huvudfärgen används på knappar, rubriker, menyval och länkar. Röda bemanningsvarningar och gröna statusmarkeringar är oberoende av profilfärgen. Ett eget underbemannat pass har röd bakgrund och separat grön text för den egna bokningen; vanliga egna bokningar har ljusgrön bakgrund. Visningsskärmen fick rubriken Incheckning ovanför QR-koden. Incheckningens säkerhetsregler och möjlighet till avstängning är oförändrade.
 
 ## Menykolumn och portalnamn – version 0.6.037
 
@@ -592,3 +592,8 @@ Utskicket köas i samma databastransaktion som kontot och överlever omstart. Ak
 Admin/SA ser status under **Volontärer → Visa profil → Kontohantering** och kan välja **Skicka ny inbjudan** för nya konton som ännu inte valt eget lösenord, enligt ordinarie behörighetsregler. Inga mejl eller lösenordslänkar visas i profilsvaren. Avstängda konton får inga utskick. En utgången länk kan ersättas via Glömt lösenord eller en ny inbjudan.
 
 Det befintliga registreringsformulärets tillfälliga lösenord finns kvar som reserv. Volontären behöver inte få detta om välkomstmejlets länk används. Det är inte möjligt att välja lösenord enbart genom att känna till någon annans e-postadress.
+
+
+## Grafisk profil på det publika veckoschemat (0.6.042)
+
+Visningssidan följer valt katthems sparade färger och uppladdade logotyp från Administration → Grafisk profil. En profiländring hämtas automatiskt med schemat. Passkorten har rundade hörn och färgad överkant som i portalen. Röda bemanningsvarningar har en egen statusfärg. På breda skärmar visas sju dagar sida vid sida med större text för läsning på avstånd.

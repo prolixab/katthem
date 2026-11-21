@@ -7,3 +7,21 @@ header #period{margin:6px 0 0;font-size:18px}header h1{line-height:1.1}#status{p
 .pass-checkin{width:100%;margin-top:10px;padding:9px 6px;font-size:15px}.slot .future-checkin{margin:10px 0 0}.checkin-dialog{border:0;border-radius:12px;padding:24px;max-width:520px;width:calc(100% - 32px);color:#233831;background:#f6f5ef}.checkin-dialog::backdrop{background:#14251b88}.checkin-dialog h2{margin:0 0 16px}.checkin-dialog p{line-height:1.45}.checkin-dialog select{width:100%;display:block;min-height:48px;font-size:19px;margin:8px 0 16px;background:white}.checkin-dialog button{margin:4px 8px 4px 0}.checkin-dialog .small{font-size:14px}
 
 #registration{max-width:720px;margin:30px auto;padding:28px;background:white;border:2px solid #719983;border-radius:12px}#registration[hidden]{display:none}.pairing-code{font-size:38px;font-weight:bold;letter-spacing:.15em}#registration p{line-height:1.5}
+
+:root{--primary:#244e43;--background:#f7f7f0;--ink:#263c35;--accent:#a24d31;--on-primary:#fff;--surface:color-mix(in srgb,var(--background) 94%,var(--ink));--line:color-mix(in srgb,var(--background) 75%,var(--ink));font-family:"Segoe UI",sans-serif;color:var(--ink);background:var(--background)}
+.display-heading{display:flex;align-items:center;gap:14px;min-width:0;overflow-wrap:anywhere}
+#display-logo{flex:none;width:62px;height:62px;object-fit:contain}
+button{background:var(--primary);color:var(--on-primary);border-radius:9px;font-weight:600}
+#status{border-radius:9px;color:var(--ink);background:var(--surface)}
+.day h2{border-color:var(--line)}
+.today h2,.day.week-start{border-color:var(--primary)}
+.week-number,.day.week-start .week-number,#presence a{color:var(--ink)}
+.today h2 span{display:table;padding:1px 8px;margin-top:3px;border-radius:20px;background:var(--primary);color:var(--on-primary)}
+.slot{background:var(--background);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:11px}
+.needs-more{border-color:#d89b94;border-top-color:#b5362f;background:#fff1ee;color:#752721}
+.cancelled{border-top-color:#9da59f}
+.future-checkin{color:inherit;background:transparent;border-color:var(--line)}
+.checkin-dialog,#registration{color:var(--ink);background:var(--background);border:1px solid var(--line)}
+#checkin-message{color:#263c35}
+button:focus-visible,a:focus-visible,select:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+@media(max-width:650px){#display-logo{width:36px;height:36px}}

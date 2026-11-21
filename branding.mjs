@@ -1,9 +1,13 @@
 const defaults={primary:'#244e43',background:'#f7f7f0',text:'#263c35',accent:'#a24d31',logo:''};
 const luminance=color=>{const a=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4);return .2126*a[0]+.7152*a[1]+.0722*a[2]};
 export function contrast(a,b){const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+export function readBranding(db){
+ const row=db.prepare('SELECT * FROM branding WHERE id=1').get();
+ return {primary:row.primary_color,background:row.background_color,text:row.text_color,accent:row.accent_color,logo:row.logo,revision:row.revision};
+}
 export function createBranding(db){
  db.exec(`CREATE TABLE IF NOT EXISTS branding(id INTEGER PRIMARY KEY CHECK(id=1),primary_color TEXT NOT NULL DEFAULT '#244e43',background_color TEXT NOT NULL DEFAULT '#f7f7f0',text_color TEXT NOT NULL DEFAULT '#263c35',accent_color TEXT NOT NULL DEFAULT '#a24d31',logo TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0);INSERT OR IGNORE INTO branding(id) VALUES(1)`);
- const get=()=>{const r=db.prepare('SELECT * FROM branding WHERE id=1').get();return {primary:r.primary_color,background:r.background_color,text:r.text_color,accent:r.accent_color,logo:r.logo,revision:r.revision}};
+ const get=()=>readBranding(db);
  function save(p){const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};if(!p||!Number.isInteger(p.revision)||Object.keys(p).some(k=>!['primary','background','text','accent','logo','revision'].includes(k)))fail('Kontrollera färger och logotyp.');const values=p;
   for(const k of ['primary','background','text','accent'])if(typeof values[k]!=='string'||!/^#[0-9a-f]{6}$/i.test(values[k]))fail('Välj giltiga färger.');
   if(contrast(values.text,values.background)<4.5)fail('Text och sidbakgrund behöver tydligare kontrast. Välj en mörkare text eller ljusare bakgrund.');

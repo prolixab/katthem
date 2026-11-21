@@ -6,7 +6,7 @@ import {calendarEvents} from './calendar.mjs';
 import {createBackups} from './backups.mjs';
 import {createAudit} from './audit.mjs';
 import {requiresPasswordChange} from './password-policy.mjs';
-import {createBranding} from './branding.mjs';
+import {contrast,createBranding,readBranding} from './branding.mjs';
 import {createPortalEngagement} from './portal-engagement.mjs';
 import {createPortalNews} from './portal-news.mjs';
 import {createVolunteerTransfers} from './volunteer-transfer.mjs';
@@ -150,6 +150,11 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(url.pathname==='/api/display'){
     if(req.method!=='GET')fail('Endast läsning är tillåten.',405);const home=url.searchParams.get('shelter'),config=displays.authorizeRead(home,req.headers['x-display-key'],deviceToken(req,home));if(!house(home))fail('Visningslänken är ogiltig eller återkallad.',404);
     res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow, noarchive');const w=await worker(home),data=displaySchedule(w.db,{name:house(home).name,...config,...(config.allow_checkin?{slotKey:(id,day)=>displayPassKey(home,req.headers['x-display-key'],day,id)}:{})});data.presence=null;data.security_enabled=config.security_enabled;data.device_registered=Boolean(config.device_hash);
+    const branding=readBranding(w.db);
+    if(url.searchParams.get('profile')!==String(branding.revision)){
+     const {primary,background,text,accent,logo,revision}=branding;
+     data.branding={primary,background,text,accent,logo,revision,on_primary:contrast(primary,'#ffffff')>=4.5?'#ffffff':'#000000'};
+    }
     const module=w.db.prepare('SELECT enabled,revision FROM presence_settings WHERE id=1').get();
     if(module?.enabled&&config.device_hash){const ticket=tickets.issue(home,config.device_hash,config.device_revision,module.revision),link=new URL('/',origin);link.searchParams.set('shelter',home);link.hash='narvaro/'+ticket.token;const cacheKey=home+':'+ticket.token;for(const [id,value] of displayQrCache)if(value.expires_at<=Date.now())displayQrCache.delete(id);let cached=displayQrCache.get(cacheKey);if(!cached){const {default:QR}=await import('qrcode');cached={png:await QR.toDataURL(link.href,{width:384,margin:4,errorCorrectionLevel:'M'}),expires_at:ticket.expires_at};displayQrCache.set(cacheKey,cached)}data.presence={link:link.href,png:cached.png,expires_at:ticket.expires_at,remaining_ms:Math.max(0,ticket.expires_at-Date.now())};if(config.allow_checkin)data.checkin={day:data.today,options:displayChoices(w.db,home,req.headers['x-display-key']).map(({booking_id,...option})=>option)};}
     return send(data);
