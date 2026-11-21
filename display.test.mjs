@@ -52,3 +52,28 @@ test('Visningsprofil: färger och logotyp uppdateras och rensas vid återkalland
  await b.refresh();
  assert.equal(b.colors.size,0);
 });
+
+test('Visningsklient: ritar om passkorten vid ändring eller efter återanslutning',async()=>{
+ const b=browser();
+ await new Promise(setImmediate);
+ const schedule=b.elements.get('schedule');
+ let markup=schedule.innerHTML,writes=0;
+ Object.defineProperty(schedule,'innerHTML',{
+  get:()=>markup,
+  set:value=>{markup=value;writes++}
+ });
+ await b.refresh();
+ assert.equal(writes,0);
+ b.data.days[0].slots[0].booked=2;
+ await b.refresh();
+ assert.equal(writes,1);
+ assert.match(markup,/2 bokade/);
+ b.mode('revoked');
+ await b.refresh();
+ assert.equal(markup,'');
+ const clearedWrites=writes;
+ b.mode('ok');
+ await b.refresh();
+ assert.match(markup,/2 bokade/);
+ assert.equal(writes,clearedWrites+1);
+});

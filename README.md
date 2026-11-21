@@ -606,3 +606,7 @@ Superadmin kan välja gemensam sparning i Grafisk profil, Moduler → Närvarobe
 - Grafisk profil sparar färgerna och logotypen på de angivna katthemmen.
 - Närvaromodulen får samma av/på-inställning på katthemmen. Vid avstängning rensas dagens bekräftelser och senaste närvarodatum för de katthem som omfattas.
 - E-post sparar Gmail-adress, portaladress, e-postaktivering samt mottagare och intervall för schemalagda CSV-exporter. CSV-exporterna från båda hemmen går till Gmail-adressen i formuläret. Om adressen är ny på något av hemmen behöver du ange applösenordet. Ett tomt lösenordsfält bevarar det sparade lösenordet för samma adress på respektive hem. Varje hem har sitt eget utskicksschema och exportunderlag.
+
+## Snabbare startsida och visningsskärm (0.6.044)
+
+Startsidan visar samma kattbild i WebP. Webbläsaren väljer mellan 480 och 960 pixlars bredd utifrån visningsytan och skärmens pixeltäthet. Originalbilden i PNG finns kvar. Visningsskärmen hämtar fortfarande aktuella uppgifter var femte sekund och ritar om passkorten när deras innehåll eller möjlighet till incheckning ändras. QR-kodens giltighet och kontrollen av visningslänken fungerar som tidigare.
