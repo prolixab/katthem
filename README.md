@@ -632,3 +632,9 @@ Bokstavsraden hoppar till sektionens rubrik och flyttar tangentbordsfokus dit. B
 Admin och superadmin ser **Senast inloggad** under Visa profil, med datum och klockslag i Europe/Stockholm. Endast lyckad autentisering uppdaterar `users.last_login_at`. Misslyckade försök, läsning av sidor, bakgrundsuppdateringar och internt skapade sessioner vid byte av katthem räknas inte som inloggning. Kopplade profiler visar den ordinarie kontoinloggningens tid. Uppgiften behålls vid flytt av konto och rensas vid gallring när identiteten raderas.
 
 Äldre uppgifter fylls inte i eller gissas från kontots ålder. Innan en lyckad inloggning registrerats står Ingen inloggning registrerad ännu. Tiden visas bara i den privata volontärprofilen, inte i offentliga scheman eller volontärernas kontaktlistor. Den är separat från Senast på plats och bekräftar inte fysisk närvaro eller arbetstid. Ingen historik över enskilda inloggningar sparas av funktionen.
+
+## Deltagarnamn i inloggat veckoschema
+
+Inloggade volontärer ser bokade personers namn på passkorten i både veckovy och listvy samt i passdialogen. Samma `displayNames`-regel som på schemavisningssidan används: förnamn och bara de efternamnsbokstäver som behövs för att särskilja lika förnamn. Namnen levereras som `slots[].names` och uppdateras med ordinarie schemahämtning efter bokning eller avbokning. Inställda pass har en tom namnlista.
+
+Andra personers boknings-id, användar-id, e-post och privata profiler lämnas inte ut till volontärer. `bookings` innehåller fortsatt bara den egna personens bokningar. Admin och superadmin behåller den fullständiga deltagarlistan och bokningshanteringen. Namnvisningen kräver inloggning och åtkomst till valt katthem och är oberoende av den separata visningsskärmens inställningar.

@@ -1,4 +1,5 @@
 import {isAdmin} from './roles.mjs';
+import {displayNames} from './display.mjs';
 export function scheduleRange(params){
  const start=params.get('start'),end=params.get('end');
  const valid=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T12:00:00Z'))&&new Date(s+'T12:00:00Z').toISOString().slice(0,10)===s;
@@ -10,7 +11,12 @@ export function scheduleData(db,user,greenIds,range=null){
  const condition=range?'WHERE (s.date BETWEEN ? AND ? OR EXISTS(SELECT 1 FROM bookings own WHERE own.slot_id=s.id AND own.user_id=?))':'',args=range?[range.start,range.end,user.id]:[];
  const slots=db.prepare('SELECT s.*,EXISTS(SELECT 1 FROM volunteer_meeting_origins v WHERE v.slot_id=s.id) volunteer_meeting,2 minimum_staff,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id) booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND user_id=?) mine FROM slots s '+condition+' ORDER BY s.date,s.start,s.id').all(user.id,...args);
  const bookings=isAdmin(user)?db.prepare('SELECT b.*,u.name,u.email FROM bookings b JOIN users u ON u.id=b.user_id JOIN slots s ON s.id=b.slot_id '+condition).all(...args):db.prepare('SELECT * FROM bookings WHERE user_id=?').all(user.id);
- const greenCounts=new Map();
- for(const b of db.prepare('SELECT b.user_id,b.slot_id FROM bookings b JOIN slots s ON s.id=b.slot_id '+condition).all(...args))if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
- return {slots:slots.map(s=>({...s,green_booked:greenCounts.get(s.id)||0})),bookings};
+ const greenCounts=new Map(),namesBySlot=new Map(),cancelled=new Set(slots.filter(s=>s.cancelled).map(s=>s.id));
+ const people=db.prepare('SELECT b.user_id,b.slot_id,u.name FROM bookings b JOIN users u ON u.id=b.user_id JOIN slots s ON s.id=b.slot_id '+condition+' ORDER BY u.name COLLATE NOCASE,b.id').all(...args);
+ const labels=displayNames(people.filter(p=>!cancelled.has(p.slot_id)));
+ for(const b of people){
+  if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
+  if(!cancelled.has(b.slot_id)){if(!namesBySlot.has(b.slot_id))namesBySlot.set(b.slot_id,[]);namesBySlot.get(b.slot_id).push(labels.get(b.user_id).label)}
+ }
+ return {slots:slots.map(s=>({...s,names:namesBySlot.get(s.id)||[],green_booked:greenCounts.get(s.id)||0})),bookings};
 }
