@@ -299,3 +299,13 @@ test('CSV-mejl skiljer katthem med samma mottagare och följer aktuellt namn vid
  time+=86400000;await services[0].run();assert.match(messages.at(-1).subject,/^Huskvarna katthem – CSV-export /);
  }finally{databases.forEach(db=>db.close())}
 });
+
+
+test('Egna checklistan är tillgänglig även för gröna, godkända, admin och SA utan att punkter kryssas automatiskt',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),fn=source.split('\n').find(l=>l.startsWith('function volunteerChecklist('));
+ for(const role of ['volunteer','admin','superadmin'])for(const ready of [false,true]){
+ const html=runInNewContext(fn+';volunteerChecklist()',{state:{user:{role,green:true,engagement:{intro_ready:ready}},checklist:{checked_items:['done','removed'],groups:[{title:'Introduktion',items:[{id:'done',text:'Klar punkt'},{id:'todo',text:'Återstår'}]}]}},isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>s});
+ assert.match(html,/1 av 2 punkter klara/);assert.match(html,/data-checklist-item="done" checked/);assert.match(html,/data-checklist-item="todo" >/);assert.doesNotMatch(html,/data-checklist-item="removed"/);if(role!=='volunteer')assert.match(html,/gröna genom sin roll/);
+ }
+ const account=source.split('\n').find(l=>l.startsWith('function accountPage('));assert.match(account,/data-booking-help-target="introduction-checklist">Öppna min introduktionschecklista/);
+});

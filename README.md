@@ -58,7 +58,7 @@ Kör `npm test` för integrationstester av autentisering, behörighet, bokning o
 
 ## Passantal, grönmarkering och volontärimport
 
-Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Fler än 15 genomförda pass ger också automatiskt grönmarkering. Att ta bort en manuell markering tar inte bort den automatiska.
+Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Minst 10 genomförda pass och helt klar checklista ger automatisk grönmarkering. Manuell markering ersätter passkravet men kräver fortfarande klar checklista. Att ta bort en manuell markering tar inte bort den automatiska.
 
 Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;lösenord;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Varje rad kräver ett lösenord på 10–200 tecken. Befintliga eller dubblerade e-postadresser stoppar hela importen. Inga e-postmeddelanden skickas; lämna kontouppgifterna personligen.
 
@@ -167,7 +167,7 @@ Introduktionsavsnittet har tagits bort från Praktisk information och redigering
 
 Under Praktisk information finns Min första tid på katthemmet: en personlig introduktionschecklista med kryss som sparas automatiskt per inloggat konto i SQLite. Den omfattar trygghet, arbetet inklusive genomgång av sanering, katternas bemötande, portalen och avstämning. Kryss kan tas bort och finns kvar efter utloggning och omstart. Ingen närvaro eller instämpling registreras. Endast användarens egna kryss hämtas och ändras av API.
 
-Introduktionschecklistan döljs i Praktisk information för grönmarkerade användare, inklusive styrelse och superadmin som alltid är gröna. Detta gäller både manuell och automatisk grönmarkering. Sparade kryss bevaras och visas igen om användaren inte längre är grön. Adress och portalmanual visas fortfarande.
+Den personliga introduktionschecklistan är tillgänglig under Praktisk information → Introduktion och stöd för alla inloggade, även gröna, godkända, styrelse, admin och superadmin. Mitt konto → Min introduktionschecklista leder till samma lista. Var och en fyller i sina egna punkter; sparade kryss bevaras. Admin och superadmin behåller grönstatus genom sin roll.
 
 ## Version 0.3.001
 
@@ -444,7 +444,7 @@ Att superadmin klickar ur ”Introduktion genomförd och godkänd” rensar **in
 
 Standardvalet i redigeraren är alltid **nya och pågående introduktioner**, även om föregående ändring gällde alla. Redan godkända volontärer behöver därmed inte komplettera nya punkter om inte admin uttryckligen ändrar målgruppen.
 
-Introduktionsdelen och volontärens checklista döljs när `intro_ready` är sant. Återkallat godkännande visar dem igen med sparade kryss kvar. Fullständig checklista räcker inte för att återställa ett återkallat godkännande; admin/SA behöver godkänna igen. Även introduktionsraden under aktuella rutiner döljs efter godkännande. Rutinbekräftelsen hanteras fortfarande separat.
+Introduktionspåminnelsen döljs när `intro_ready` är sant. Den egna checklistan är fortsatt åtkomlig via Mitt konto eller Praktisk information. Återkallat godkännande visar påminnelsen igen med sparade kryss kvar. Fullständig checklista räcker inte för att återställa ett återkallat godkännande; admin/SA behöver godkänna igen. Även introduktionsraden under aktuella rutiner döljs efter godkännande. Rutinbekräftelsen hanteras fortfarande separat.
 
 ### Redigerbara städrutiner på passen (0.6.026)
 Admin och superadmin kan välja **Redigera städrutiner** i ett pass, eller **Praktisk information → Aktuella rutiner → Redigera städrutiner på passen**. Ange gemensam daglig text och städning per veckodag. Texterna sparas i katthemmets egen databas (`shift_routines`) med revisionskontroll och visas på alla pass; befintliga texter används vid uppgradering. Varje text får innehålla högst 2000 tecken. Volontärer kan läsa men inte ändra dem. Ändringen loggas i adminloggen och följer med databasbackuper. Bokningar och introduktionsgodkännanden påverkas inte. Detta är separat från versionshanterade Aktuella rutiner och kräver ingen läsbekräftelse; uppdatera instruktionerna på plats separat. Enskilda pass har fortsatt sin egen beskrivning och Extra information.
@@ -652,3 +652,11 @@ Admin och superadmin ser antal klara punkter under Introduktion i volontärprofi
 ## Katthemmets namn i CSV-mejl
 
 Automatiska och manuella CSV-exporter anger katthemmets aktuella namn i både ämnesraden (`Huskvarna – CSV-export ÅÅÅÅ-MM-DD`) och första raden i mejltexten (`CSV-export från katthem: Huskvarna`). Namnet hämtas vid utskick från katthemsregistret, så även framtida namnbyten slår igenom utan att utskicksschemat behöver startas om. Separata katthem fortsätter skicka var sitt underlag, även med samma mottagaradress. Tidigare skickade mejl ändras inte.
+
+## Rättad manuell grönmarkering
+
+En sparad manuell grönmarkering (`green_manual`) räknas nu i den gemensamma grönstatusen. För volontärer krävs en komplett introduktionschecklista samt antingen manuell markering eller minst tio genomförda pass. Sparade manuella markeringar börjar gälla vid nästa hämtning utan att sättas på nytt. Om ett kryss tas bort upphör grönstatusen tills checklistan är komplett igen. Intro-godkännande är separat och ersätter inte checklistan.
+
+Den egna checklistan använder fortsatt `PATCH /api/checklist` med det inloggade kontots id. Ingen rätt att fylla i andras checklistor har lagts till. Admins läsvy över en annan persons framsteg är fortsatt skrivskyddad.
+
+För styrelse- och administratörskonton visar profilen en förklaring i stället för den tidigare låsta introduktionsrutan. Grönstatus genom rollen säger inte att frågorna har besvarats; faktisk checklistprogress visas separat. Volontärernas godkännanderuta fungerar som tidigare.
