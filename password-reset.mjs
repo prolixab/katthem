@@ -1,6 +1,14 @@
 import {setPasswordChange,isLocalAccount} from './password-policy.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 const digest=token=>createHash('sha256').update(token).digest('hex');
+// Swedish midnight at the start of 2027 (CET). Evaluate when sending, including retries.
+const onboardingRolloutEnds=Date.parse('2027-01-01T00:00:00+01:00');
+export function welcomeIntroduction(time=Date.now()){
+ const introduction='Ditt nästa steg\n\nNär du har loggat in, börja med introduktionsstegen som visas på startsidan. Läs igenom rutinerna och gå igenom checklistan i din egen takt. Kryssa i varje punkt när du har genomfört den.\n\nDen praktiska introduktionen gör du på katthemmet tillsammans med en erfaren volontär. Fråga gärna en kontaktperson om du behöver hjälp.';
+ const experienced='Även du som redan är erfaren behöver gå igenom introduktionsstegen i portalen. Syftet är att du ska känna igen upplägget, känna till aktuella rutiner och kunna stötta nya volontärer. Kryssa i checklistans punkter när du har gått igenom dem.\n\nHar du redan genomfört den praktiska introduktionen på katthemmet kan admin bekräfta den erfarenheten – du behöver inte göra om den enbart för att portalen är ny.';
+ return introduction+(time<onboardingRolloutEnds?'\n\n'+experienced:'');
+}
+
 export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.now(),verifyPassword,shelterId}={}){
  db.exec('CREATE TABLE IF NOT EXISTS password_resets(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,expires INTEGER NOT NULL)');
  db.exec("CREATE TABLE IF NOT EXISTS welcome_emails(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,sent_at INTEGER,activated_at INTEGER,attempts INTEGER NOT NULL DEFAULT 0,next_attempt INTEGER NOT NULL DEFAULT 0)");
@@ -42,7 +50,7 @@ export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.n
   for(const u of rows){const token=randomBytes(32).toString('hex'),tokenHash=digest(token),time=now();let link;try{const url=new URL(mailProvider.appUrl());if(shelterId)url.searchParams.set('shelter',shelterId);url.hash='reset='+token;link=url.href}catch{continue}
    db.prepare('INSERT INTO password_resets VALUES(?,?,?,?)').run(tokenHash,u.user_id,time,time+86400000);
    db.prepare('UPDATE welcome_emails SET attempts=attempts+1,next_attempt=? WHERE user_id=?').run(time+300000,u.user_id);
-   try{await mailProvider.send({to:u.email,subject:'Välkommen till Tassportalen – välj ditt lösenord',text:`Hej ${u.name}!\n\nEtt konto har skapats åt dig i Tassportalen. Här kan du boka pass och hitta information från din verksamhet.\n\nVälj ditt eget lösenord genom att öppna länken inom 24 timmar:\n${link}\n\nLänken kan användas en gång. Logga sedan in med din e-postadress och ditt valda lösenord.\n\nOm länken har gått ut kan du välja Glömt lösenord på inloggningssidan eller be en administratör skicka en ny inbjudan.\n\nOm du inte väntade dig ett konto, kontakta verksamhetens administratör. Dela inte länken med någon annan.`,key:'tassportalen-welcome/'+tokenHash});db.prepare('UPDATE welcome_emails SET sent_at=? WHERE user_id=?').run(now(),u.user_id)}catch{db.prepare('DELETE FROM password_resets WHERE token_hash=?').run(tokenHash)}
+   try{await mailProvider.send({to:u.email,subject:'Välkommen till Tassportalen – välj ditt lösenord',text:`Hej ${u.name}!\n\nEtt konto har skapats åt dig i Tassportalen. Här kan du boka pass och hitta information från din verksamhet.\n\nVälj ditt eget lösenord genom att öppna länken inom 24 timmar:\n${link}\n\nLänken kan användas en gång. Logga sedan in med din e-postadress och ditt valda lösenord.\n\n${welcomeIntroduction(time)}\n\nOm länken har gått ut kan du välja Glömt lösenord på inloggningssidan eller be en administratör skicka en ny inbjudan.\n\nOm du inte väntade dig ett konto, kontakta verksamhetens administratör. Dela inte länken med någon annan.`,key:'tassportalen-welcome/'+tokenHash});db.prepare('UPDATE welcome_emails SET sent_at=? WHERE user_id=?').run(now(),u.user_id)}catch{db.prepare('DELETE FROM password_resets WHERE token_hash=?').run(tokenHash)}
   }
  })().finally(()=>{welcomeRunning=null});return welcomeRunning}
  return {request,reset,enqueueWelcome,welcomeStatus,retryWelcome,runWelcome,drainWelcome:()=>welcomeRunning||Promise.resolve()};

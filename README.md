@@ -594,6 +594,16 @@ Admin/SA ser status under **Volontärer → Visa profil → Kontohantering** och
 Det befintliga registreringsformulärets tillfälliga lösenord finns kvar som reserv. Volontären behöver inte få detta om välkomstmejlets länk används. Det är inte möjligt att välja lösenord enbart genom att känna till någon annans e-postadress.
 
 
+### Introduktionsuppmaning i välkomstmejlet
+
+Välkomstmejlet innehåller ett permanent avsnitt **Ditt nästa steg** som hänvisar till introduktionsstegen på startsidan, aktuella rutiner, checklistan och praktisk introduktion med en erfaren volontär.
+
+Ett tillfälligt tillägg förklarar att även redan erfarna volontärer går igenom portalens introduktion för att kunna stötta nya. Admin kan bekräfta tidigare praktisk introduktion; den behöver inte göras om enbart för införandet av portalen. Tillägget följer med välkomstmejlen fram till **1 januari 2027 kl. 00.00 Europe/Stockholm**, motsvarande **31 december 2026 kl. 23.00 UTC**. Därefter utelämnas hela tillägget automatiskt medan den vanliga introduktionsuppmaningen finns kvar.
+
+Datumet kontrolleras när varje mejl skickas, även vid köade utskick, återförsök och nya inbjudningar. Redan skickade mejl, lösenordslänkens giltighet och introduktionskrav påverkas inte.
+
+
+
 ## Grafisk profil på det publika veckoschemat (0.6.042)
 
 Visningssidan följer valt katthems sparade färger och uppladdade logotyp från Administration → Grafisk profil. En profiländring hämtas automatiskt med schemat. Passkorten har rundade hörn och färgad överkant som i portalen. Röda bemanningsvarningar har en egen statusfärg. På breda skärmar visas sju dagar sida vid sida med större text för läsning på avstånd.
