@@ -43,6 +43,14 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  r=await call('users','POST',{name:'Testvolontär',email:'test@example.se',password:'password12345'},ac);assert.equal(r.status,200);const uid=(await r.json()).users.find(u=>u.email==='test@example.se').id;
  assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
  const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');assert.equal((await call('password','POST',{current:'Password12345',password:'OwnAdminPassword12345'},newAdminCookie)).status,200);
+ // Checklist review is read-only, private to admins, and follows saved volunteer progress.
+ const reviewState=await(await call('state','GET',null,ac)).json(),reviewUser=reviewState.users.find(u=>u.email==='alex@katthem.local'),reviewRoute='engagements/'+reviewUser.id+'/checklist';
+ assert.equal((await call(reviewRoute)).status,401);assert.equal((await call(reviewRoute,'GET',null,vc)).status,403);
+ let review=await(await call(reviewRoute,'GET',null,newAdminCookie)).json();const reviewItems=review.groups.flatMap(g=>g.items);assert.ok(reviewItems.length>0);assert.equal(review.user_id,reviewUser.id);assert.equal(reviewUser.checklist_progress.total,reviewItems.length);assert.equal(reviewUser.checklist_progress.completed,review.checked_items.length);
+ const reviewItem=reviewItems[0].id,wasChecked=review.checked_items.includes(reviewItem);assert.equal((await call('checklist','PATCH',{item_id:reviewItem,checked:!wasChecked},vc)).status,200);
+ review=await(await call(reviewRoute,'GET',null,ac)).json();assert.equal(review.checked_items.includes(reviewItem),!wasChecked);assert.equal((await(await call('state','GET',null,ac)).json()).users.find(u=>u.id===reviewUser.id).checklist_progress.completed,review.checked_items.length);
+ assert.equal((await call(reviewRoute,'PATCH',{checked_items:[]},ac)).status,405);assert.equal((await call('engagements/999999/checklist','GET',null,ac)).status,404);assert.equal((await(await call(reviewRoute,'GET',null,ac)).json()).checked_items.includes(reviewItem),!wasChecked);
+ await call('checklist','PATCH',{item_id:reviewItem,checked:wasChecked},vc);
  const activityConfig=(await(await call('state','GET',null,ac)).json()).activity_settings;assert.equal(activityConfig.inactive_days,30);
  assert.equal((await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},vc)).status,403);
  const activitySaved=await call('activity-settings','PUT',{inactive_days:60,revision:activityConfig.revision},newAdminCookie);assert.equal(activitySaved.status,200);assert.equal((await activitySaved.json()).activity_settings.inactive_days,60);

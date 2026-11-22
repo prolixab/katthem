@@ -638,3 +638,17 @@ Admin och superadmin ser **Senast inloggad** under Visa profil, med datum och kl
 Inloggade volontärer ser bokade personers namn på passkorten i både veckovy och listvy samt i passdialogen. Samma `displayNames`-regel som på schemavisningssidan används: förnamn och bara de efternamnsbokstäver som behövs för att särskilja lika förnamn. Namnen levereras som `slots[].names` och uppdateras med ordinarie schemahämtning efter bokning eller avbokning. Inställda pass har en tom namnlista.
 
 Andra personers boknings-id, användar-id, e-post och privata profiler lämnas inte ut till volontärer. `bookings` innehåller fortsatt bara den egna personens bokningar. Admin och superadmin behåller den fullständiga deltagarlistan och bokningshanteringen. Namnvisningen kräver inloggning och åtkomst till valt katthem och är oberoende av den separata visningsskärmens inställningar.
+
+## Tydlig portaladress i volontärmejl
+
+Välkomstmejl, lösenordsåterställning, passpåminnelser och ändrings-/inställelsemejl har en separat avslutning med rubriken Hitta tillbaka till Tassportalen, raden Portalens adress och tips om att spara ett bokmärke. Den vanliga adressen hämtas från den konfigurerade portaladressens origin (t.ex. https://katthem.teed.se); den innehåller varken återställningstoken eller katthemsparametrar. Vid domänbyte följer nya mejl den sparade adressen. Personliga engångslänkar och befintliga länkar till rätt katthem behålls separat. Redan skickade mejl och redan köade ändringsmejl skrivs inte om.
+
+## Läs checklistans framsteg i volontärprofilen
+
+Admin och superadmin ser antal klara punkter under Introduktion i volontärprofilen och i Granska introduktion. Visa introduktionschecklista öppnar en läsvy med varje tillämplig punkt markerad Klar eller Återstår, grupperad enligt personens checklista. Kryss och introduktionsgodkännanden ändras inte av läsvyn.
+
+`GET /api/engagements/:id/checklist` kräver admin eller superadmin och använder valt katthems behörigheter. Volontärer får inte läsa andras framsteg. Gallrade och okända konton returnerar 404. Andra metoder nekas. Äldre godkända introduktioner får fortsatt sin tidigare uppsättning tillämpliga punkter.
+
+## Katthemmets namn i CSV-mejl
+
+Automatiska och manuella CSV-exporter anger katthemmets aktuella namn i både ämnesraden (`Huskvarna – CSV-export ÅÅÅÅ-MM-DD`) och första raden i mejltexten (`CSV-export från katthem: Huskvarna`). Namnet hämtas vid utskick från katthemsregistret, så även framtida namnbyten slår igenom utan att utskicksschemat behöver startas om. Separata katthem fortsätter skicka var sitt underlag, även med samma mottagaradress. Tidigare skickade mejl ändras inte.

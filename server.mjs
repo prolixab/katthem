@@ -141,7 +141,7 @@ const emailStore=emailSettingsStore(db);
 const emailSettings=createEmailSettings({store:emailStore,dataDir,defaultUrl:appOrigin||process.env.PORTAL_PUBLIC_URL||'http://127.0.0.1:'+String(process.env.PORT||3080),production,fallback:{apiKey:process.env.RESEND_API_KEY,from:process.env.EMAIL_FROM,appUrl:appOrigin}});
 if(process.env.PORTAL_SHELTER_ID){const baseAppUrl=emailSettings.appUrl;emailSettings.appUrl=()=>{const u=new URL(baseAppUrl());u.searchParams.set('shelter',process.env.PORTAL_SHELTER_ID);return u.href.replace(/\/$/,'')}}
 const reminders=createReminders(db,{mailProvider:emailSettings});
-const csvExports=createCsvExports(db,emailSettings);
+const csvExports=createCsvExports(db,emailSettings,{shelterName:currentShelterName});
 const schedule=createSchedule(db,sundayRules);schedule.ensure();
 const notifications=createNotifications(db,emailSettings);
 const passwordReset=createPasswordReset(db,emailSettings,hash,{verifyPassword:verify,shelterId:process.env.PORTAL_SHELTER_ID});
@@ -181,7 +181,8 @@ function completedCounts(userId){
  return counts;
 }
 function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return checklist.idsFor(uid).every(id=>checked.has(id))}
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
+function checklistProgress(uid){const ids=checklist.idsFor(uid),checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return {completed:ids.filter(id=>checked.has(id)).length,total:ids.length}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {checklist_progress:checklistProgress(u.id),last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
 function pendingIntroductions(user){
  if(!isAdmin(user))return undefined;
@@ -354,6 +355,13 @@ const server=http.createServer(async(req,res)=>{
  }
  if(/^\/api\/news\/\d+\/dismiss$/.test(url.pathname)&&req.method==='POST'){const p=await body(req);news.dismiss(user.id,Number(url.pathname.split('/')[3]),p.revision);return send(snapshot(user))}
  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+ if(/^\/api\/engagements\/\d+\/checklist$/.test(url.pathname)){
+  if(req.method!=='GET')fail('Metoden stöds inte.',405);
+  const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT id,name FROM users WHERE id=?').get(id);
+  if(!target||engagements.get(id)?.status==='purged')fail('Volontären finns inte.',404);
+  const template=checklist.forUser(id),ids=new Set(template.groups.flatMap(g=>g.items.map(i=>i.id)));
+  return send({user_id:id,name:target.name,...template,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(id).map(r=>r.item_id).filter(id=>ids.has(id))});
+ }
  if(url.pathname==='/api/activity-settings'&&req.method==='PUT'){activitySettings.save(await body(req));return send(snapshot(user))}
  if(url.pathname==='/api/booking-settings'&&req.method==='PUT'){bookingSettings.save(await body(req));return send(snapshot(user))}
  if(/^\/api\/members\/\d+\/phone$/.test(url.pathname)&&req.method==='PATCH'){

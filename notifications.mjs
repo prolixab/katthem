@@ -6,7 +6,7 @@ export function createNotifications(db,mailProvider){
   const action=after.cancelled?'Inställt':before.cancelled?'Bokningsbart igen':'Ändrat';
   const when=s=>`${s.date} kl. ${s.start}–${s.end}`;
   for(const u of db.prepare('SELECT u.id,u.name FROM bookings b JOIN users u ON u.id=b.user_id WHERE b.slot_id=? AND u.active=1').all(after.id)){
-   const text=`Hej ${u.name}!\n\n${action}: ${after.title}\n${when(after)}\n${before.date!==after.date||before.start!==after.start||before.end!==after.end?'Tidigare tid: '+when(before)+'\n':''}\n${after.note}\n${after.extra_info||''}\n\n${after.cancelled?'Passet är inställt. Din anmälan finns kvar i historiken.':'Din bokning finns kvar.'}\nSe aktuell information i volontärportalen: ${mailProvider.appUrl()}`;
+   const text=`Hej ${u.name}!\n\n${action}: ${after.title}\n${when(after)}\n${before.date!==after.date||before.start!==after.start||before.end!==after.end?'Tidigare tid: '+when(before)+'\n':''}\n${after.note}\n${after.extra_info||''}\n\n${after.cancelled?'Passet är inställt. Din anmälan finns kvar i historiken.':'Din bokning finns kvar.'}\nSe aktuell information i volontärportalen: ${mailProvider.appUrl()}\n\nHitta tillbaka till Tassportalen\nPortalens adress: ${new URL(mailProvider.appUrl()).origin}\nSpara gärna adressen som ett bokmärke i din webbläsare.`;
    db.prepare('INSERT INTO change_notifications(id,user_id,subject,text) VALUES(?,?,?,?)').run(randomUUID(),u.id,`${action}: ${after.title} ${after.date}`,text);
   }
  }

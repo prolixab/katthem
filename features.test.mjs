@@ -1,3 +1,4 @@
+import {createReminders} from './reminders.mjs';
 import {createBookingSettings} from './booking-settings.mjs';
 import {runInNewContext} from 'node:vm';
 import {test} from 'node:test';
@@ -259,4 +260,42 @@ test('Bokstavssektioner följer sökning och återställs när sökningen rensas
  runInNewContext(defs+";filterMembers('anna')",context);assert.deepEqual(groups.map(g=>g.hidden),[false,true]);assert.deepEqual(buttons.map(b=>b.disabled),[false,true]);assert.equal(labels[0].textContent,'1 volontär');assert.equal(empty.hidden,true);
  runInNewContext("filterMembers('saknas')",context);assert.equal(empty.hidden,false);assert.ok(groups.every(g=>g.hidden));
  runInNewContext("filterMembers('')",context);assert.ok(groups.every(g=>!g.hidden));assert.ok(buttons.every(b=>!b.disabled));assert.equal(empty.hidden,true);
+});
+
+
+test('Volontärmejl visar portaladressen separat utan token och följer ett domänbyte',async()=>{
+ const db=database(),messages=[];let appUrl='https://katthem.teed.se/?shelter=hem-a';const now=new Date(2030,4,11,12).getTime();
+ const provider={appUrl:()=>appUrl,status:()=>({configured:true}),send:async m=>messages.push(m)};
+ try{
+ db.exec("INSERT INTO slots VALUES(1,'2030-05-11','13:00','17:00','Morgonpass',2,'Mat',0,'regular');INSERT INTO bookings VALUES(1,1,1)");
+ const reset=createPasswordReset(db,provider,p=>p,{now:()=>now,shelterId:'hem-a'});await reset.request('anna@example.se');reset.enqueueWelcome(1);await reset.runWelcome();
+ const before=db.prepare('SELECT * FROM slots WHERE id=1').get(),changes=createNotifications(db,provider);changes.queue(before,{...before,note:'Ny uppgift'});await changes.run();
+ await createReminders(db,{mailProvider:provider,now:()=>now}).run();
+ db.exec('DELETE FROM reminder_delivery');await createReminders(db,{apiKey:'test',from:'test@example.se',appUrl,now:()=>now,fetchImpl:async(_,options)=>{messages.push(JSON.parse(options.body));return {ok:true}}}).run();
+ assert.equal(messages.length,5);for(const message of messages){const footer=message.text.split('Hitta tillbaka till Tassportalen\n')[1];assert.equal(footer,'Portalens adress: https://katthem.teed.se\nSpara gärna adressen som ett bokmärke i din webbläsare.');assert.doesNotMatch(footer,/[?#]|reset=/)}
+ for(const message of messages.slice(0,2)){const link=new URL(message.text.match(/https:\/\/\S+/)[0]);assert.equal(link.searchParams.get('shelter'),'hem-a');assert.match(link.hash,/^#reset=[a-f0-9]{64}$/)}
+ appUrl='https://ny-portal.example.se/?shelter=hem-a';await reset.request('anna@example.se');assert.match(messages.at(-1).text,/Portalens adress: https:\/\/ny-portal\.example\.se\n/);
+ }finally{db.close()}
+});
+
+
+test('Checklistans läsvy visar framsteg, återstående punkter och skyddar text utan redigeringsfält',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),defs=source.split('\n').filter(l=>l.startsWith('function checklistReviewContent(')||l.startsWith('function checklistReviewSummary(')).join('\n');
+ const context={esc:s=>String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;')};
+ const result=runInNewContext(defs+`;({summary:checklistReviewSummary({id:7,checklist_progress:{completed:1,total:2}}),content:checklistReviewContent({checked_items:['a','old'],groups:[{title:'<Avsnitt>',items:[{id:'a',text:'Läst rutiner'},{id:'b',text:'<Nästa punkt>'}]}]})})`,context);
+ assert.match(result.summary,/1 av 2 punkter klara/);assert.match(result.summary,/Visa introduktionschecklista/);assert.match(result.content,/1 av 2 punkter klara/);assert.match(result.content,/1 återstår/);assert.match(result.content,/✓ Klar/);assert.match(result.content,/○ Återstår/);assert.match(result.content,/&lt;Nästa punkt&gt;/);assert.doesNotMatch(result.content,/<input|data-checklist-item|<Nästa punkt>/);
+});
+
+
+test('CSV-mejl skiljer katthem med samma mottagare och följer aktuellt namn vid både schemalagt och manuellt utskick',async()=>{
+ const databases=[],messages=[];let time=Date.UTC(2030,0,1,12);const names=['Huskvarna','Värnamo'];
+ const provider={settings:()=>({gmail_address:'backup@example.se',csv_enabled:true,csv_interval:'daily'}),status:()=>({configured:true}),send:async m=>messages.push(m)};
+ try{
+ const services=names.map((_,index)=>{const db=new DatabaseSync(':memory:');databases.push(db);return createCsvExports(db,provider,{now:()=>time,shelterName:()=>names[index],attachments:()=>[{filename:'schema.csv',content:'hem-'+index,contentType:'text/csv'}]})});
+ time+=86400000;await Promise.all(services.map(s=>s.run()));assert.equal(messages.length,2);
+ for(const name of names){const message=messages.find(m=>m.subject.startsWith(name+' – CSV-export '));assert.ok(message);assert.equal(message.to,'backup@example.se');assert.ok(message.text.startsWith('CSV-export från katthem: '+name+'\n\n'));assert.match(message.text,/ersätter inte fullständig databasbackup/)}
+ assert.notEqual(messages[0].key,messages[1].key);assert.notEqual(messages[0].attachments[0].content,messages[1].attachments[0].content);
+ const nextAt=services[0].status().next_at;names[0]='Huskvarna katthem';assert.equal(services[0].status().next_at,nextAt);await services[0].run({force:true});assert.match(messages.at(-1).subject,/^Huskvarna katthem – CSV-export /);assert.ok(messages.at(-1).text.startsWith('CSV-export från katthem: Huskvarna katthem\n\n'));
+ time+=86400000;await services[0].run();assert.match(messages.at(-1).subject,/^Huskvarna katthem – CSV-export /);
+ }finally{databases.forEach(db=>db.close())}
 });
