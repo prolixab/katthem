@@ -242,3 +242,21 @@ test('Välkomstmejl: begränsad batch och stopp efter sex fel',async()=>{const d
 test('Välkomstintroduktion: tillfällig erfarenhetstext försvinner exakt vid svenskt årsskifte',()=>{const cutoff=Date.parse('2027-01-01T00:00:00+01:00');for(const time of [cutoff-1,cutoff,cutoff+1,Date.parse('2027-06-01T00:00:00Z')]){const text=welcomeIntroduction(time);assert.match(text,/Ditt nästa steg/);assert.match(text,/introduktionsstegen som visas på startsidan/);assert.match(text,/Kryssa i varje punkt när du har genomfört den/);assert.match(text,/praktiska introduktionen/);if(time<cutoff){assert.match(text,/Även du som redan är erfaren/);assert.match(text,/admin bekräfta den erfarenheten/)}else{assert.doesNotMatch(text,/Även du som redan är erfaren|portalen är ny|admin bekräfta den erfarenheten/)}}});
 
 test('Välkomstmejl: kötid avgör inte årsskiftestexten och tidigare lösenordslänk behåller giltighet',async()=>{const db=database(),messages=[];let time=Date.parse('2026-12-31T23:59:59.999+01:00');const provider={status:()=>({configured:true}),appUrl:()=> 'https://portal.example.se',send:async m=>messages.push(m)};try{const service=createPasswordReset(db,provider,p=>'hashed:'+p,{now:()=>time});service.enqueueWelcome(1);await service.runWelcome();assert.match(messages[0].text,/Även du som redan är erfaren/);const firstToken=messages[0].text.match(/#reset=(\w+)/)[1];db.prepare('UPDATE users SET active=1 WHERE id=2').run();service.enqueueWelcome(2);time++;await service.runWelcome();assert.equal(messages.length,2);assert.doesNotMatch(messages[1].text,/Även du som redan är erfaren|portalen är ny/);assert.match(messages[1].text,/Ditt nästa steg/);assert.match(messages[1].text,/24 timmar/);service.reset(firstToken,'NewPassword12345');assert.equal(service.welcomeStatus(1).state,'completed');time+=60000;service.retryWelcome(2);await service.runWelcome();assert.equal(messages.length,3);assert.doesNotMatch(messages[2].text,/Även du som redan är erfaren/);assert.match(messages[2].text,/Ditt nästa steg/)}finally{db.close()}});
+
+ test('Volontärlistans bokstavsgrupper använder svensk ordning och bevarar indata',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8');
+ const defs=source.slice(source.indexOf("const memberAlphabet="),source.indexOf('function memberSections('));
+ const result=runInNewContext(defs+`;const people=[{id:1,name:'Örjan'},{id:2,name:'Äsa'},{id:3,name:'Åke'},{id:4,name:'Zara'},{id:5,name:'Émile'},{id:6,name:'Anna'},{id:7,name:'Anders'},{id:8,name:'123'}];const before=JSON.stringify(people);({groups:memberGroups(people).map(([letter,items])=>[letter,items.map(p=>p.name)]),unchanged:before===JSON.stringify(people),decomposed:memberLetter('A\\u030ake')})`);
+ assert.deepEqual(JSON.parse(JSON.stringify(result.groups)),[['A',['Anders','Anna']],['E',['Émile']],['Z',['Zara']],['Å',['Åke']],['Ä',['Äsa']],['Ö',['Örjan']],['#',['123']]]);assert.equal(result.unchanged,true);assert.equal(result.decomposed,'Å');
+ });
+
+test('Bokstavssektioner följer sökning och återställs när sökningen rensas',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8');const start=source.indexOf('function filterMembers('),defs=source.slice(start,source.indexOf('\nfunction ',start+1));
+ const cards=[{dataset:{profileId:'1',search:'anna'}},{dataset:{profileId:'2',search:'bo'}}],labels=[{},{}];
+ const groups=cards.map((card,i)=>({dataset:{memberGroup:i?'B':'A'},querySelectorAll:()=>[card],querySelector:()=>labels[i]}));
+ const buttons=['A','B'].map(letter=>({dataset:{memberLetter:letter},setAttribute(){}})),empty={};
+ const context={volunteerSearch:'',volunteerFilter:'all',state:{members:[{id:1},{id:2}],users:[]},app:{querySelectorAll:s=>s==='[data-member-card]'?cards:s==='[data-member-group]'?groups:buttons},$:()=>empty};
+ runInNewContext(defs+";filterMembers('anna')",context);assert.deepEqual(groups.map(g=>g.hidden),[false,true]);assert.deepEqual(buttons.map(b=>b.disabled),[false,true]);assert.equal(labels[0].textContent,'1 volontär');assert.equal(empty.hidden,true);
+ runInNewContext("filterMembers('saknas')",context);assert.equal(empty.hidden,false);assert.ok(groups.every(g=>g.hidden));
+ runInNewContext("filterMembers('')",context);assert.ok(groups.every(g=>!g.hidden));assert.ok(buttons.every(b=>!b.disabled));assert.equal(empty.hidden,true);
+});

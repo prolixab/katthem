@@ -620,3 +620,15 @@ Superadmin kan välja gemensam sparning i Grafisk profil, Moduler → Närvarobe
 ## Snabbare startsida och visningsskärm (0.6.044)
 
 Startsidan visar samma kattbild i WebP. Webbläsaren väljer mellan 480 och 960 pixlars bredd utifrån visningsytan och skärmens pixeltäthet. Originalbilden i PNG finns kvar. Visningsskärmen hämtar fortfarande aktuella uppgifter var femte sekund och ritar om passkorten när deras innehåll eller möjlighet till incheckning ändras. QR-kodens giltighet och kontrollen av visningslänken fungerar som tidigare.
+
+## Alfabetisk volontärlista
+
+Admin och superadmin ser volontärlistan uppdelad efter förnamnets första bokstav. Sektionerna följer svensk bokstavsordning med Å, Ä och Ö sist. Varje rubrik visar antalet personer i det aktuella sök- och filterurvalet. Namn inom sektionen sorteras också på svenska. Namn som börjar med andra tecken samlas under #. Accenter som É samlas under grundbokstaven E, medan Å, Ä och Ö är egna sektioner.
+
+Bokstavsraden hoppar till sektionens rubrik och flyttar tangentbordsfokus dit. Bokstäver utan synliga personer är inaktiva. Sökning och befintliga filter gäller hela listan; tomma sektioner döljs och antal uppdateras direkt. Profilknappar och behörigheter fungerar som tidigare. På mobil visas ett kort per rad och bokstavsraden kan rullas i sidled. Kontaktpersonslistan för volontärer påverkas inte.
+
+## Senast inloggad i volontärprofilen
+
+Admin och superadmin ser **Senast inloggad** under Visa profil, med datum och klockslag i Europe/Stockholm. Endast lyckad autentisering uppdaterar `users.last_login_at`. Misslyckade försök, läsning av sidor, bakgrundsuppdateringar och internt skapade sessioner vid byte av katthem räknas inte som inloggning. Kopplade profiler visar den ordinarie kontoinloggningens tid. Uppgiften behålls vid flytt av konto och rensas vid gallring när identiteten raderas.
+
+Äldre uppgifter fylls inte i eller gissas från kontots ålder. Innan en lyckad inloggning registrerats står Ingen inloggning registrerad ännu. Tiden visas bara i den privata volontärprofilen, inte i offentliga scheman eller volontärernas kontaktlistor. Den är separat från Senast på plats och bekräftar inte fysisk närvaro eller arbetstid. Ingen historik över enskilda inloggningar sparas av funktionen.
