@@ -8,12 +8,6 @@ Dubbelklicka på **Starta katthemmet.cmd**, eller kör `npm start` i denna mapp.
 
 Vid första starten skapas ett administratörskonto och ett volontärkonto med slumpade lösenord. Uppgifterna ligger i **data/lokala-konton.txt**. Byt lösenord under Mitt konto. Filen med startlösenorden uppdateras inte vid lösenordsbyte och kan därefter raderas.
 
-## Kopiera filer i Windows
-
-Dubbelklicka på **Filkopieraren.cmd**. Ange en källmapp per rad och avsluta med en tom rad. Ange filändelser, exempelvis `pdf, jpg, docx`, och välj en gemensam målmapp. Svara `j` för att söka även i undermappar. Målmappen skapas om den saknas.
-
-Originalen ligger kvar och namnkrockar får ett löpnummer, till exempel `bild (2).jpg`. Varje körning kopierar alla matchande filer igen.
-
 ## Driftsättning i Coolify
 
 1. Skapa en applikation från detta Git-repository och välj **Docker Compose** som byggmetod. Använd rotmappen och `/docker-compose.yml` som Compose-fil. Compose bygger appens image med den befintliga Dockerfilen.
