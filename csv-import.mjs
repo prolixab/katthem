@@ -19,11 +19,13 @@ export function parseVolunteersCsv(text){
  if(rows.length>501)throw Error('Importera högst 500 volontärer åt gången.');
  const aliases={namn:'name',name:'name','e-post':'email',email:'email',lösenord:'password',password:'password',grön:'green',green:'green'};
  const headers=rows.shift().map(v=>aliases[v.trim().toLowerCase()]);
- if(headers.some(h=>!h)||new Set(headers).size!==headers.length||!['name','email','password'].every(h=>headers.includes(h)))throw Error('Använd rubrikerna namn, e-post, lösenord och valfritt grön.');
+ if(headers.some(h=>!h)||new Set(headers).size!==headers.length||!['name','email'].every(h=>headers.includes(h)))throw Error('Använd rubrikerna namn och e-post. Grön och lösenord är valfria.');
  return rows.map((values,index)=>{
   if(values.length!==headers.length)throw Error('Rad '+(index+2)+': fel antal kolumner.');
   const entry=Object.fromEntries(headers.map((h,i)=>[h,values[i]]));entry.name=entry.name.trim();entry.email=entry.email.trim().toLowerCase();
-  if(!entry.name||entry.name.length>100||!/^\S+@\S+\.\S+$/.test(entry.email)||entry.password.length<10||entry.password.length>200)throw Error('Rad '+(index+2)+': ange namn, giltig e-post och lösenord med 10–200 tecken.');
+  entry.password=entry.password??'';
+  if(!entry.name||entry.name.length>100||!/^\S+@\S+\.\S+$/.test(entry.email))throw Error('Rad '+(index+2)+': ange namn och giltig e-post.');
+  if(entry.password&&(entry.password.length<10||entry.password.length>200))throw Error('Rad '+(index+2)+': angivet lösenord ska ha 10–200 tecken.');
   const green=(entry.green||'').trim().toLowerCase();
   if(!['','ja','nej','true','false','1','0'].includes(green))throw Error('Rad '+(index+2)+': grön ska vara ja eller nej.');
   entry.green=['ja','true','1'].includes(green);return entry;

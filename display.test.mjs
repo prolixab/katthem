@@ -77,3 +77,21 @@ test('Visningsklient: ritar om passkorten vid ändring eller efter återanslutni
  assert.match(markup,/2 bokade/);
  assert.equal(writes,clearedWrites+1);
 });
+
+test('Visningsklient: behåller passkorten när servern utelämnar en oförändrad vecka',async()=>{
+ const b=browser();
+ await new Promise(setImmediate);
+ const schedule=b.elements.get('schedule'),original=schedule.innerHTML;
+ b.data.schedule_revision='stable';
+ await b.refresh();
+ const days=b.data.days;
+ delete b.data.days;
+ await b.refresh();
+ assert.match(b.requests.at(-1).url,/schedule_revision=stable/);
+ assert.equal(schedule.innerHTML,original);
+ b.data.days=days;
+ b.data.schedule_revision='updated';
+ b.data.days[0].slots[0].booked=2;
+ await b.refresh();
+ assert.match(schedule.innerHTML,/2 bokade/);
+});

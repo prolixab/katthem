@@ -10,7 +10,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {scryptSync} from 'node:crypto';
 import {createPortal} from './portal.mjs';
 const password='PortalTest12345',hash='test-salt:'+scryptSync(password,'test-salt',64).toString('hex');
-test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender och återkallande', {timeout:180000},async()=>{
+test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender och återkallande', {timeout:180000},async t=>{
  const dir=mkdtempSync(path.join(tmpdir(),'katthem-portal-'));let portal;
  const initial=new DatabaseSync(path.join(dir,'katthem.sqlite'));initial.exec("CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'volunteer',active INTEGER NOT NULL DEFAULT 1)");for(const [id,name,email,role] of [[1,'Superadmin','boss@example.se','superadmin'],[2,'Styrelse A','board@example.se','admin'],[3,'Volontär A','vol@example.se','volunteer']])initial.prepare('INSERT INTO users VALUES(?,?,?,?,?,1)').run(id,name,email,hash,role);initial.close();
  try{
@@ -18,6 +18,9 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const call=(route,method='GET',body,cookie,shelter)=>fetch(base+'/api/'+route,{method,headers:{...(cookie?{cookie}:{}),...(shelter?{'X-Katthem':shelter}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
   const credentials=new Map();const login=async(email,home='huskvarna')=>{const key=home+':'+email,current=credentials.get(key)||password;const r=await call('login','POST',{email,password:current,portal_shelter:home});assert.equal(r.status,200,await r.clone().text());const cookie=r.headers.get('set-cookie').split(';')[0];let data=await r.json();if(data.password_change_required){assert.equal(data.slots,undefined);assert.equal((await call('portal/manage','GET',null,cookie)).status,403);assert.equal((await call('password','POST',{current,password:current},cookie)).status,400);const next=current+'-egen';assert.equal((await call('password','POST',{current,password:next},cookie)).status,200);credentials.set(key,next);data=await(await call('state','GET',null,cookie)).json()}return {cookie,data}};
   assert.equal((await call('state')).status,401);const sa=await login('boss@example.se'),board=await login('board@example.se'),vol=await login('vol@example.se');
+  assert.equal((await call('activity-followup','GET',null,vol.cookie)).status,403);
+  assert.equal((await(await call('activity-followup','GET',null,board.cookie)).json()).enabled,0);
+  assert.deepEqual(await(await call('activity-followup/me','GET',null,vol.cookie)).json(),{followup:null});
   // Own contact fields are editable; private administration fields are rejected server-side.
   assert.equal((await call('profile','PATCH',{phone:'0700000000',messenger_url:'https://m.me/vol-test',revision:vol.data.my_profile.revision},vol.cookie)).status,200);
   let profileState=await(await call('state','GET',null,vol.cookie)).json();assert.equal(profileState.my_profile.phone,'0700000000');
@@ -49,9 +52,30 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   async function approveDevice(key,home='huskvarna'){const request=await fetch(base+'/api/display/enroll?shelter='+home,{method:'POST',headers:{'X-Display-Key':key,'content-type':'application/json',cookie:displayCookie},body:'{}'});assert.equal(request.status,200);const cookie=request.headers.get('set-cookie');if(cookie){assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);displayCookie=cookie.split(';')[0]}const device=await request.json();assert.equal(device.token,undefined);if(!device.approved){const config=await(await call('portal/display','GET',null,sa.cookie,home)).json();const payload={revision:config.revision,device_revision:config.device_revision,pairing_code:device.pairing_code};assert.equal((await call('portal/display/device','POST',payload,board.cookie,home)).status,403);assert.equal((await call('portal/display/device','POST',payload,sa.cookie,home)).status,200)}return device}
   const displayGet=(home='huskvarna',method='GET',key=displayKey)=>fetch(base+'/api/display?shelter='+home,{method,headers:{'X-Display-Key':key,cookie:displayCookie}});
   const publicBefore=await displayGet();assert.equal(publicBefore.status,200);assert.equal((await publicBefore.json()).device_registered,false);
+  for(const asset of ['/app.js','/style.css']){
+   const file=await fetch(base+asset);
+   assert.equal(file.status,200);
+   assert.match(file.headers.get('etag'),/^"[a-f0-9]{64}"$/);
+   assert.equal(file.headers.get('cache-control'),'public, no-cache');
+   const cached=await fetch(base+asset,{headers:{'If-None-Match':'W/'+file.headers.get('etag')}});
+   assert.equal(cached.status,304);assert.equal(await cached.text(),'');
+   await file.arrayBuffer();
+  }
+  const mark=await call('users/3?response=compact','PATCH',{green:true},board.cookie);
+  assert.equal(mark.status,200);
+  assert.deepEqual(await mark.json(),{id:3,green_manual:true,green:false,slots:[]});
+  assert.equal((await call('users/3?response=compact','PATCH',{green:false},vol.cookie)).status,403);
+  assert.deepEqual(await(await call('users/3?response=compact','PATCH',{green:false},board.cookie)).json(),{id:3,green_manual:false,green:false,slots:[]});
   const securityFields={enabled:true,revision:1,device_revision:0};assert.equal((await call('portal/display/security','PUT',securityFields,board.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,vol.cookie)).status,403);assert.equal((await call('portal/display/security','PUT',securityFields,sa.cookie)).status,200);
   assert.equal((await displayGet()).status,403);await approveDevice(displayKey);assert.equal((await fetch(base+'/api/display?shelter=huskvarna',{headers:{'X-Display-Key':displayKey}})).status,403);
   const visible=await displayGet();assert.equal(visible.status,200);assert.equal(visible.headers.get('cache-control'),'no-store');assert.equal(visible.headers.get('set-cookie'),null);const viewOnly=await visible.json();assert.equal(viewOnly.days.length,7);assert.equal(viewOnly.show_names,false);assert.equal(viewOnly.presence,null);for(const field of ['user','users','bookings','door_code','members','contacts','news'])assert.equal(viewOnly[field],undefined);assert.equal(viewOnly.branding.primary,'#244e43');
+  assert.match(viewOnly.schedule_revision,/^[a-f0-9]{64}$/);
+  const unchangedUrl=base+'/api/display?shelter=huskvarna&schedule_revision='+viewOnly.schedule_revision;
+  const unchangedDisplay=await(await fetch(unchangedUrl,{headers:{'X-Display-Key':displayKey,cookie:displayCookie}})).json();
+  assert.equal(unchangedDisplay.days,undefined);
+  assert.equal(unchangedDisplay.schedule_revision,viewOnly.schedule_revision);
+  assert.equal(unchangedDisplay.device_registered,true);
+  assert.equal((await fetch(unchangedUrl,{headers:{'X-Display-Key':displayKey}})).status,403);
   assert.equal((await fetch(base+'/api/display/confirm?shelter=huskvarna',{method:'POST',headers:{'content-type':'application/json','X-Display-Key':displayKey},body:JSON.stringify({choice:'a'.repeat(64)})})).status,403);
   assert.equal((await displayGet(b)).status,404);assert.equal((await displayGet('huskvarna','POST')).status,405);assert.equal((await displayGet('huskvarna','GET','bad')).status,404);
   for(const route of ['state','portal/manage','export','profile'])assert.equal((await fetch(base+'/api/'+route,{headers:{'X-Display-Key':displayKey}})).status,401);
@@ -140,7 +164,23 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   assert.equal((await call('members/'+phoneProfile.id+'/phone','PATCH',{phone:'0701234567',revision:phoneProfile.revision},board.cookie,'huskvarna')).status,200);
   assert.equal((await call('members/'+phoneProfile.id+'/phone','PATCH',{phone:'stale',revision:phoneProfile.revision},sa.cookie,'huskvarna')).status,409);
   const visiblePhone=await(await call('state','GET',null,vol.cookie,'huskvarna')).json();assert.equal(visiblePhone.contacts.find(p=>p.id===phoneProfile.id).phone,'0701234567');assert.equal(visiblePhone.leadership.find(p=>p.id===phoneProfile.id).phone,'0701234567');assert.equal(visiblePhone.members,undefined);
+  const rangeForStaffing='staffing?start=2026-01-01&end=2026-01-07';
+  assert.equal((await call(rangeForStaffing,'GET',null,vol.cookie,'huskvarna')).status,403);
+  assert.equal((await call(rangeForStaffing,'GET',null,board.cookie,b)).status,403);
   const grant={source:'huskvarna',user_id:2,target:b,role:'admin',enabled:true};assert.equal((await call('portal/manage/grants','POST',grant,sa.cookie)).status,200);
+  const boardHome=(await(await call('state','GET',null,board.cookie)).json()).portal;
+  assert.equal(boardHome.selected,'huskvarna');
+  const listingDate=board.data.slots.find(slot=>!slot.cancelled).date;
+  for(const home of ['huskvarna',b]){
+   const summary=await call('staffing?start='+listingDate+'&end='+listingDate,'GET',null,board.cookie,home);
+   assert.equal(summary.status,200);
+   const staffingData=await summary.json();
+   assert.ok(staffingData.slots.length);
+   assert.ok(staffingData.slots.every(slot=>slot.date===listingDate&&Array.isArray(slot.people)));
+   for(const slot of staffingData.slots)for(const person of slot.people)assert.deepEqual(Object.keys(person).sort(),['green','name']);
+  }
+  assert.equal((await(await call('state','GET',null,board.cookie)).json()).portal.selected,'huskvarna');
+
   const beforeBoardVisit=await(await call('state','GET',null,sa.cookie,b)).json(),sharedBoard=beforeBoardVisit.leadership.find(u=>u.name==='Styrelse A');assert.ok(sharedBoard,'Styrelsen ska synas innan personen själv öppnar målhemmet');assert.equal(sharedBoard.board_role,'secretary');assert.equal(sharedBoard.phone,'0701234567');assert.equal(sharedBoard.messenger_url,'https://m.me/board-test');const sharedPrivate=beforeBoardVisit.members.find(m=>m.id===sharedBoard.id)||beforeBoardVisit.members.find(m=>m.name==='Styrelse A');assert.ok(sharedPrivate);assert.notEqual(sharedPrivate.note,'A-PRIVATE-NOTE');assert.notEqual(sharedPrivate.birth_date,'1990-01-01');
 
   // A same-email local account requires an internal alias, but UI/contact email uses source identity.
@@ -201,10 +241,15 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const introProfileState=await(await call('state','GET',null,sa.cookie,b)).json(),profileIntro=introProfileState.users.find(u=>u.id===introUid).engagement;
   assert.equal((await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:false,revision:profileIntro.revision},sameEmail.cookie,b)).status,403);
   assert.equal((await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:false,revision:profileIntro.revision},introVolunteer.cookie,b)).status,403);
-  const unapproved=await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:false,revision:profileIntro.revision},sa.cookie,b);assert.equal(unapproved.status,200);const reviewed=(await unapproved.json()).users.find(u=>u.id===introUid).engagement;assert.equal(reviewed.can_self_book,false);assert.equal(reviewed.intro_ready,false);assert.equal(reviewed.intro_review_required,1);
+  const unapproved=await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:false,revision:profileIntro.revision},sa.cookie,b);assert.equal(unapproved.status,200);const fullIntroResponse=await unapproved.text();const reviewed=JSON.parse(fullIntroResponse).users.find(u=>u.id===introUid).engagement;assert.equal(reviewed.can_self_book,false);assert.equal(reviewed.intro_ready,false);assert.equal(reviewed.intro_review_required,1);
   const halted=await call('bookings','POST',{slotId:introSlots[5].id},introVolunteer.cookie,b);assert.equal(halted.status,409);assert.equal((await halted.json()).code,'INTRODUCTION_REVIEW');
   assert.equal((await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:true,revision:profileIntro.revision},sa.cookie,b)).status,409);
-  const approved=await call('engagements/'+introUid+'/introduction-status','PATCH',{completed:true,revision:reviewed.revision},sa.cookie,b);assert.equal(approved.status,200);const restored=(await approved.json()).users.find(u=>u.id===introUid).engagement;assert.equal(restored.intro_ready,true);assert.equal(restored.intro_review_required,0);
+  const approved=await call('engagements/'+introUid+'/introduction-status?response=compact','PATCH',{completed:true,revision:reviewed.revision},sa.cookie,b);assert.equal(approved.status,200);
+  const compactIntroResponse=await approved.text(),compact=JSON.parse(compactIntroResponse),restored=compact.engagement;
+  assert.deepEqual(Object.keys(compact).sort(),['engagement','id','introduction_pending']);
+  assert.equal(compact.id,introUid);assert.equal(compact.introduction_pending,null);
+  assert.ok(Buffer.byteLength(compactIntroResponse)<Buffer.byteLength(fullIntroResponse));
+  t.diagnostic('Introduction response bytes (full / compact): '+Buffer.byteLength(fullIntroResponse)+' / '+Buffer.byteLength(compactIntroResponse));assert.equal(restored.intro_ready,true);assert.equal(restored.intro_review_required,0);
   const afterIntroProfile=await(await call('state','GET',null,sa.cookie,b)).json();assert.deepEqual(afterIntroProfile.bookings,introProfileState.bookings);assert.equal(afterIntroProfile.users.find(u=>u.id===introUid).checklist_complete,true);
 
   for(const cookie of [sa.cookie,sameEmail.cookie])assert.ok(!(await(await call('state','GET',null,cookie,b)).json()).introduction_pending.some(u=>u.id===introUid));

@@ -28,3 +28,50 @@ test('Menygrupper: rollstyrning och konto längst ned utan dubbla menyval',()=>{
   assert.ok(html.indexOf('data-view="account"')>html.indexOf('class="side-bottom"'));assert.equal((html.match(/data-view="account"/g)||[]).length,1);assert.match(html,/data-action="logout"/);assert.match(html,/aria-current="page"/);assert.match(html,/class="menu-icon"/);
  }
 });
+
+test('60-dagarsmejl: granskas före aktivering, skickas en gång per uppehåll och kan bekräftas',async()=>{
+ const {createActivityFollowup}=await import('./activity.mjs');
+ const db=new DatabaseSync(':memory:');
+ const day=86400000;
+ let time=100*day,canSend=true,failNext=true;
+ const sent=[],completed=new Map();
+ const mailProvider={status:()=>({configured:canSend}),appUrl:()=>'https://example.se/?shelter=a',
+  send:async message=>{sent.push(message);if(failNext){failNext=false;throw Error('Tillfälligt fel')}}};
+ try{
+  db.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,email TEXT,role TEXT,active INTEGER,created_at INTEGER);
+   CREATE TABLE engagements(user_id INTEGER PRIMARY KEY,status TEXT,changed_at INTEGER);
+   INSERT INTO users VALUES(1,'Anna','anna@example.se','volunteer',1,${40*day}),(2,'Bo','bo@example.se','volunteer',1,${41*day}),
+   (3,'Cia','cia@example.se','volunteer',1,0),(4,'Dan','dan@example.se','admin',1,0);
+   INSERT INTO engagements VALUES(1,'active',0),(2,'active',0),(3,'paused',0),(4,'active',0)`);
+  let followup=createActivityFollowup(db,{mailProvider,lastCompleted:()=>completed,shelterName:()=>'Huskvarna',now:()=>time});
+  await followup.run();
+  assert.equal(sent.length,0);
+  const preview=followup.status();
+  assert.deepEqual(preview.recipients.map(p=>p.id),[1]);
+  canSend=false;
+  assert.throws(()=>followup.save({...preview,enabled:true}),/Aktivera.*e-post/);
+  canSend=true;
+  assert.throws(()=>followup.save({...preview,signature:'changed',enabled:true}),{status:409});
+  followup.save({...preview,enabled:true});
+  await followup.run();
+  await followup.run();
+  assert.equal(sent.length,1);
+  assert.equal(followup.own(1),null);
+  time+=300000;
+  followup=createActivityFollowup(db,{mailProvider,lastCompleted:()=>completed,shelterName:()=>'Huskvarna',now:()=>time});
+  await followup.run();
+  assert.equal(sent.length,2);
+  assert.equal(sent[0].key,sent[1].key);
+  assert.match(sent[1].text,/example\.se\/\?shelter=a#engagemang/);
+  assert.throws(()=>followup.confirm(2,time),{status:409});
+  assert.equal(followup.confirm(1,time).confirmed_at,time);
+  assert.equal(followup.status().history[0].confirmed_at,time);
+  await followup.run();
+  assert.equal(sent.length,2);
+  completed.set(1,time);
+  time+=60*day;
+  await followup.run();
+  assert.notEqual(sent.findLast(m=>m.to==='anna@example.se').key,sent[1].key);
+  assert.equal(followup.own(1).confirmed_at,null);
+ }finally{db.close()}
+});

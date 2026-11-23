@@ -168,6 +168,8 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
     }
     const module=w.db.prepare('SELECT enabled,revision FROM presence_settings WHERE id=1').get();
     if(module?.enabled&&config.device_hash){const ticket=tickets.issue(home,config.device_hash,config.device_revision,module.revision),link=new URL('/',origin);link.searchParams.set('shelter',home);link.hash='narvaro/'+ticket.token;const cacheKey=home+':'+ticket.token;for(const [id,value] of displayQrCache)if(value.expires_at<=Date.now())displayQrCache.delete(id);let cached=displayQrCache.get(cacheKey);if(!cached){const {default:QR}=await import('qrcode');cached={png:await QR.toDataURL(link.href,{width:384,margin:4,errorCorrectionLevel:'M'}),expires_at:ticket.expires_at};displayQrCache.set(cacheKey,cached)}data.presence={link:link.href,png:cached.png,expires_at:ticket.expires_at,remaining_ms:Math.max(0,ticket.expires_at-Date.now())};if(config.allow_checkin)data.checkin={day:data.today,options:displayChoices(w.db,home,req.headers['x-display-key']).map(({booking_id,...option})=>option)};}
+    data.schedule_revision=createHmac('sha256',secret).update(JSON.stringify([home,data.today,data.show_names,data.days])).digest('hex');
+    if(url.searchParams.get('schedule_revision')===data.schedule_revision)delete data.days;
     return send(data);
    }
    const incomingToken=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('portal_session='))?.slice(15);
@@ -314,7 +316,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }else target=primary;
    if(p&&access(p,target))await syncGrantedProfiles(target);
    let presenceProof=false;if(url.pathname==='/api/presence/confirmations'&&req.method==='POST'){if(!p||!await grantStatus(p,target))return send({error:'Skanna den aktuella QR-koden på katthemmets skärm innan du bekräftar närvaro.',code:'QR_REQUIRED'},403);presenceProof=true}
-   const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(presenceProof)headers['x-presence-proof']=secret;if(req.headers.origin)headers.origin=req.headers.origin;if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
+   const w=await worker(target),headers={'x-portal-secret':secret,'x-portal-origin':origin};if(presenceProof)headers['x-presence-proof']=secret;if(req.headers.origin)headers.origin=req.headers.origin;if(!url.pathname.startsWith('/api/')&&req.headers['if-none-match'])headers['if-none-match']=req.headers['if-none-match'];if(payload)headers['content-type']='application/json';if(token)headers.cookie='session='+token;
    const result=await fetch(w.address+url.pathname+url.search,{method:req.method,headers,body:payload||undefined,redirect:'manual'});
    if(result.ok&&write&&p&&['admin','superadmin'].includes(access(p,target))){const event=audit.fromRequest(url.pathname,req.method,payload?json(payload):{});if(event)audit.record({home:target,actor:p,...event})}
    if(result.ok&&write&&/^\/api\/(users|volunteers|members|profile)(\/|$)/.test(url.pathname))await reconcile();

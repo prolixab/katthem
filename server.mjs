@@ -2,7 +2,7 @@ import {createAgePolicy} from './age-policy.mjs';
 import {createPresence} from './presence.mjs';
 import {createBookingSettings} from './booking-settings.mjs';
 import {scheduleData,scheduleRange} from './schedule-data.mjs';
-import {initPasswordPolicy,requiresPasswordChange,setPasswordChange} from './password-policy.mjs';
+import {initPasswordPolicy,requiresPasswordChange,setPasswordChange,temporaryPassword} from './password-policy.mjs';
 import {createBranding} from './branding.mjs';
 import {createEngagement} from './engagement.mjs';
 import {resolveShelter} from './shelter.mjs';
@@ -20,7 +20,7 @@ import {createMembers} from './members.mjs';
 import { isAdmin,isSuperAdmin,canManageAccount,isGreen } from './roles.mjs';
 import { upgradeDefaultShifts } from './schedule-upgrade.mjs';
 import { createEmailSettings, emailSettingsStore } from './email-settings.mjs';
-import { isInactive,createActivitySettings } from './activity.mjs';
+import { isInactive,createActivitySettings,createActivityFollowup } from './activity.mjs';
 import { createReminders } from './reminders.mjs';
 import { parseVolunteersCsv } from './csv-import.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -165,6 +165,7 @@ function ageBirthDate(uid){
  return source.prepare('SELECT birth_date FROM member_profiles WHERE user_id=?').get(link.user_id)?.birth_date||local;
 }
 const activitySettings=createActivitySettings(db);
+const activityFollowup=createActivityFollowup(db,{mailProvider:emailSettings,lastCompleted:()=>completedCounts().last,shelterName:currentShelterName});
 const agePolicy=createAgePolicy(db,{getBirth:ageBirthDate});
 const checklist=createChecklist(db);
 const checklistIds=new Set(checklistGroups.flatMap(group=>group.items.map(item=>item.id)));
@@ -184,21 +185,29 @@ function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id
 function checklistProgress(uid){const ids=checklist.idsFor(uid),checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return {completed:ids.filter(id=>checked.has(id)).length,total:ids.length}}
 function publicUser(u,counts){const completed=counts.get(u.id)||0;return {checklist_progress:checklistProgress(u.id),last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
+function pendingIntroduction(user,engagement){
+ return user.active&&engagement?.awaiting_approval
+  ?{id:user.id,name:user.name,routine_current:engagement.routine_current,practical_completed:Boolean(engagement.practical_completed)}
+  :null;
+}
 function pendingIntroductions(user){
  if(!isAdmin(user))return undefined;
- return db.prepare("SELECT id,name FROM users WHERE active=1 AND role='volunteer' ORDER BY name").all().flatMap(u=>{const e=engagements.get(u.id);return e?.awaiting_approval?[{id:u.id,name:u.name,routine_current:e.routine_current,practical_completed:Boolean(e.practical_completed)}]:[]});
+ return db.prepare("SELECT id,name,active FROM users WHERE active=1 AND role='volunteer' ORDER BY name").all().map(u=>pendingIntroduction(u,engagements.get(u.id))).filter(Boolean);
+}
+function scheduleGreenIds(counts){
+ return new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
 }
 function snapshot(user){
  if(requiresPasswordChange(user))return {password_change_required:true,user:{id:user.id,name:user.name,email:user.email,role:user.role,must_change_password:true},branding:branding.get()};
  ensureOpenHouse();schedule.ensure();members.syncAccounts();
  const shelter=shelterFor(user.id);
  const counts=completedCounts();
- const greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
+ const greenIds=scheduleGreenIds(counts);
 
  const memberRows=members.list().map(m=>process.env.PORTAL_SHELTER_ID?{...m,shelter:currentShelterName()}:m);
  const directory=memberRows.flatMap(m=>{const account=m.user_id?db.prepare('SELECT role,active FROM users WHERE id=?').get(m.user_id):null;const board=m.board_role!=='none'&&m.status!=='ended';const trained=m.animal_care_trained&&['active','supporting'].includes(m.status);if(account&&!account.active||!board&&!isAdmin(account)&&!trained)return [];return [{id:m.id,name:m.name,board_role:board?m.board_role:'none',board_title:board?m.board_title:'',contact_focus:m.contact_focus,role:account?.role||'volunteer',animal_care_trained:Boolean(m.animal_care_trained),phone:m.phone,messenger_url:m.messenger_url}]}).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
  const contacts=memberRows.filter(m=>['active','supporting'].includes(m.status)&&(m.board_role!=='none'||m.animal_care_trained)&&(!m.user_id||db.prepare('SELECT active FROM users WHERE id=?').get(m.user_id)?.active)).map(m=>({id:m.id,name:m.name,phone:m.phone,messenger_url:m.messenger_url,board_role:m.board_role,board_title:m.board_title,contact_focus:m.contact_focus,responsibilities:m.responsibilities,shelter:m.shelter,animal_care_trained:m.animal_care_trained})).sort((a,b)=>Number(b.board_role!=='none')-Number(a.board_role!=='none')||a.name.localeCompare(b.name,'sv'));
- return {modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?memberRows:undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),...scheduleData(db,user,greenIds),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts,last_login_at FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
+ return {activity_followup:activityFollowup.own(user.id),modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),branding:branding.get(),my_profile:db.prepare('SELECT name,email,phone,messenger_url,birth_date,revision FROM member_profiles WHERE user_id=?').get(user.id),routine:engagements.routine(),engagement_admin:isAdmin(user)?engagements.list():undefined,contacts,bulletin_board:news.board(),news:news.visible(user.id),news_admin:isAdmin(user)?news.all():undefined,members_enabled:true,leadership:directory,members:isAdmin(user)?memberRows:undefined,shelter:{name:shelter.name,configured:shelter.configured},shelter_admin:isAdmin(user)?shelterFor(null):undefined,door_code:shelter.door,checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=? ORDER BY item_id').all(user.id).map(row=>row.item_id)},volunteer_info:{location:shelter.location},change_notifications:isAdmin(user)?notifications.status():undefined,email_reminders:isAdmin(user)?reminders.status():undefined,user:publicUser(user,counts),...scheduleData(db,user,greenIds),users:isAdmin(user)?db.prepare('SELECT id,name,email,role,active,green_manual,created_at,carried_shifts,last_login_at FROM users WHERE id NOT IN (SELECT user_id FROM engagements WHERE status=\'purged\') ORDER BY name').all().map(u=>publicUser(u,counts)):[]};
 }
 async function body(req,maxLength=20000){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>maxLength)fail('För stor begäran.',413);chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')}catch{fail('Ogiltiga uppgifter.')}}
 function importEntries(p){
@@ -232,6 +241,7 @@ function resetRateLimit(req){
  let value=resetAttempts.get(key);if(!value){value={count:0,until:now+60000};resetAttempts.set(key,value)}
  if(++value.count>10)fail('För många försök. Vänta en minut.',429);
 }
+const staticValidators=new Map();
 const server=http.createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'");
  const send=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data))};
@@ -280,10 +290,37 @@ const server=http.createServer(async(req,res)=>{
   }
  }
  if(url.pathname==='/api/state'&&req.method==='GET')return send(snapshot(user));
+ if(url.pathname==='/api/staffing'&&req.method==='GET'){
+  if(!isAdmin(user))fail('Du saknar administratörsbehörighet för katthemmet.',403);
+  const range=scheduleRange(url.searchParams);
+  ensureOpenHouse();schedule.ensure();
+  const greenIds=scheduleGreenIds(completedCounts());
+  const {slots,bookings}=scheduleData(db,user,greenIds,range);
+  const peopleBySlot=new Map();
+  for(const booking of bookings){
+   if(!peopleBySlot.has(booking.slot_id))peopleBySlot.set(booking.slot_id,[]);
+   peopleBySlot.get(booking.slot_id).push({name:booking.name,green:greenIds.has(booking.user_id)});
+  }
+  return send({slots:slots.filter(slot=>!slot.cancelled&&slot.date>=range.start&&slot.date<=range.end).map(slot=>({
+   id:slot.id,date:slot.date,start:slot.start,end:slot.end,title:slot.title,booked:slot.booked,minimum_staff:slot.minimum_staff,
+   green_booked:slot.green_booked,people:peopleBySlot.get(slot.id)||[]
+  })),recommended_limit:bookingSettings.get().recommended_limit});
+ }
  if(url.pathname==='/api/schedule'&&req.method==='GET'){
   const range=scheduleRange(url.searchParams);ensureOpenHouse();schedule.ensure();
-  const counts=completedCounts(),greenIds=new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
+  const counts=completedCounts(),greenIds=scheduleGreenIds(counts);
   return send({...scheduleData(db,user,greenIds,range),schedule_range:range,modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
+ }
+ if(url.pathname==='/api/activity-followup/me'){
+  if(req.method==='GET')return send({followup:activityFollowup.own(user.id)});
+  if(req.method==='POST'){const p=await body(req);return send({followup:activityFollowup.confirm(user.id,p?.sent_at)});}
+  fail('Metoden stöds inte.',405);
+ }
+ if(url.pathname==='/api/activity-followup'){
+  if(!isAdmin(user))fail('Du saknar administratörsbehörighet.',403);
+  if(req.method==='GET')return send(activityFollowup.status());
+  if(req.method==='PUT')return send(activityFollowup.save(await body(req)));
+  fail('Metoden stöds inte.',405);
  }
  if(url.pathname==='/api/profile'&&req.method==='PATCH'){
   const p=await body(req),allowed=['name','email','phone','messenger_url','birth_date','revision'];if(!p||Object.keys(p).some(k=>!allowed.includes(k))||!Number.isInteger(p.revision))fail('Endast egna kontaktuppgifter kan ändras här.');
@@ -389,7 +426,9 @@ const server=http.createServer(async(req,res)=>{
  if(/^\/api\/engagements\/\d+\/introduction-status$/.test(url.pathname)&&req.method==='PATCH'){
   if(!isSuperAdmin(user))fail('Endast superadmin kan ändra introduktionsrutan i profilen.',403);
   const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||target.role!=='volunteer')fail('Välj en volontärprofil.',400);
-  engagements.setIntroductionStatus(id,await body(req));return send(snapshot(user));
+  const engagement=engagements.setIntroductionStatus(id,await body(req));
+  if(url.searchParams.get('response')==='compact')return send({id,engagement,introduction_pending:pendingIntroduction(target,engagement)});
+  return send(snapshot(user));
  }
  if(/^\/api\/engagements\/\d+(?:\/(hold|introduction))?$/.test(url.pathname)&&req.method==='PATCH'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);const p=await body(req),action=url.pathname.split('/')[4];if(action==='hold')engagements.hold(id,p);else if(action==='introduction')engagements.approve(id,p);else{db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(id,p);db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}}return send(snapshot(user))}
  if((url.pathname==='/api/news'&&req.method==='POST')||(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);news.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p);return send(snapshot(user))}
@@ -435,7 +474,7 @@ const server=http.createServer(async(req,res)=>{
  if(['/api/users/import-preview','/api/users/import'].includes(url.pathname)&&req.method==='POST'){
   const p=await body(req,1000000),entries=importEntries(p);
   if(url.pathname.endsWith('import-preview'))return send({users:entries.map(({name,email,green})=>({name,email,green}))});
-  const prepared=entries.map(e=>({...e,passwordHash:hash(e.password)}));
+  const prepared=entries.map(e=>({...e,passwordHash:hash(e.password||temporaryPassword())}));
   db.exec('BEGIN IMMEDIATE');try{const insert=db.prepare('INSERT INTO users(name,email,password,green_manual,created_at) VALUES(?,?,?,?,?)');for(const e of prepared){const result=insert.run(e.name,e.email,e.passwordHash,e.green?1:0,Date.now());passwordReset.enqueueWelcome(Number(result.lastInsertRowid))}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
   void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user));
  }
@@ -447,6 +486,20 @@ const server=http.createServer(async(req,res)=>{
   if(!hasActive&&!hasGreen&&!hasRole)fail('Ange en ändring.');
   if(hasActive&&(id===user.id||![true,false,0,1].includes(p.active)))fail('Ogiltig aktivering eller försök att ändra eget konto.');
   if(hasGreen&&(target.role!=='volunteer'||typeof p.green!=='boolean'))fail('Grönmarkering gäller endast volontärer.');
+  if(hasGreen&&!hasActive&&!hasRole&&url.searchParams.get('response')==='compact'){
+   const completed=completedCounts(id).get(id)||0,checklist=checklistComplete(id);
+   const green=isGreen({...target,green_manual:Number(p.green)},completed,checklist);
+   const affected=[];
+   db.prepare('UPDATE users SET green_manual=? WHERE id=?').run(Number(p.green),id);
+   if(green!==isGreen(target,completed,checklist)){
+    const greenIds=scheduleGreenIds(completedCounts()),bySlot=new Map();
+    for(const booking of db.prepare('SELECT slot_id,user_id FROM bookings WHERE slot_id IN (SELECT slot_id FROM bookings WHERE user_id=?)').all(id)){
+     bySlot.set(booking.slot_id,(bySlot.get(booking.slot_id)||0)+Number(greenIds.has(booking.user_id)));
+    }
+    for(const [slotId,green_booked] of bySlot)affected.push({id:slotId,green_booked});
+   }
+   return send({id,green_manual:p.green,green,slots:affected});
+  }
   if(hasRole&&!isSuperAdmin(user))fail('Endast superadmin får ändra behörigheter.',403);if(hasRole&&(!['superadmin','admin','volunteer'].includes(p.role)||id===user.id))fail('Ogiltig roll eller försök att ändra egen roll.');db.prepare('UPDATE users SET active=?,green_manual=?,role=? WHERE id=?').run(hasActive?Number(p.active):target.active,hasGreen?Number(p.green):target.green_manual,hasRole?p.role:target.role,id);return send(snapshot(user));
  }
 
@@ -490,15 +543,31 @@ const server=http.createServer(async(req,res)=>{
  fail('Sidan finns inte.',404);
  }
  const files={'/':'index.html','/app.js':'app.js','/schedule-view.js':'schedule-view.js','/presence.js':'presence.js','/style.css':'style.css','/portal-cat.png':'portal-cat.png','/portal-cat-480.webp':'portal-cat-480.webp','/portal-cat-960.webp':'portal-cat-960.webp'};const file=files[url.pathname];if(!file){res.writeHead(404);return res.end('Not found')}
- res.setHeader('Cache-Control',file.startsWith('portal-cat')?'public, max-age=86400':'no-store');
- res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.png')?'image/png':file.endsWith('.webp')?'image/webp':'text/javascript; charset=utf-8');res.end(readFileSync(path.join(root,'public',file)));
+ const isAsset=file.endsWith('.js')||file.endsWith('.css');
+ const conditional=['GET','HEAD'].includes(req.method)&&isAsset;
+ let content;
+ if(conditional){
+  let etag=production?staticValidators.get(file):null;
+  if(!etag){
+   content=readFileSync(path.join(root,'public',file));
+   etag='"'+createHash('sha256').update(content).digest('hex')+'"';
+   if(production)staticValidators.set(file,etag);
+  }
+  res.setHeader('ETag',etag);
+  res.setHeader('Cache-Control','public, no-cache');
+  if(req.headers['if-none-match']?.split(',').some(value=>['*',etag].includes(value.trim().replace(/^W\//,'')))){
+   res.writeHead(304);
+   return res.end();
+  }
+ }else res.setHeader('Cache-Control',file.startsWith('portal-cat')?'public, max-age=86400':'no-store');
+ res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.png')?'image/png':file.endsWith('.webp')?'image/webp':'text/javascript; charset=utf-8');res.end(req.method==='HEAD'?undefined:content??readFileSync(path.join(root,'public',file)));
  }catch(e){if(!e.status)console.error(e);send({error:e.status?e.message:'Ett oväntat fel inträffade.',code:e.status?e.code:undefined},e.status||500)}
 });
-async function maintenance(){presence.purge();schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run(),passwordReset.runWelcome()])}
+async function maintenance(){presence.purge();schedule.ensure();ensureOpenHouse();await Promise.all([reminders.run(),notifications.run(),csvExports.run(),passwordReset.runWelcome(),activityFollowup.run()])}
 const reminderTimer=setInterval(()=>maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.')),60000);reminderTimer.unref();
 maintenance().catch(()=>console.error('Bakgrundskörning misslyckades.'));
 server.listen(Number(process.env.PORT||3080),host,()=>console.log(`Katthemmet: http://${host}:${server.address().port}`));
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{
- clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain(),passwordReset.drainWelcome()]);for(const source of ageSourceDatabases.values())source.close();portalRegistry?.close();db.close();process.exit(0)});
+ clearInterval(reminderTimer);server.close(async()=>{await Promise.all([reminders.drain(),notifications.drain(),csvExports.drain(),passwordReset.drainWelcome(),activityFollowup.drain()]);for(const source of ageSourceDatabases.values())source.close();portalRegistry?.close();db.close();process.exit(0)});
  setTimeout(()=>process.exit(1),10000).unref();
 });

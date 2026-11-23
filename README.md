@@ -60,7 +60,7 @@ Kör `npm test` för integrationstester av autentisering, behörighet, bokning o
 
 Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Minst 10 genomförda pass och helt klar checklista ger automatisk grönmarkering. Manuell markering ersätter passkravet men kräver fortfarande klar checklista. Att ta bort en manuell markering tar inte bort den automatiska.
 
-Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;lösenord;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Varje rad kräver ett lösenord på 10–200 tecken. Befintliga eller dubblerade e-postadresser stoppar hela importen. Inga e-postmeddelanden skickas; lämna kontouppgifterna personligen.
+Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Befintliga eller dubblerade e-postadresser stoppar hela importen. Nya volontärer väljer eget lösenord via välkomstmejlet. Om e-post är avstängd väntar utskicket.
 
 ## Lokal drift från Windows-nätverksenhet
 
@@ -183,7 +183,7 @@ Under Veckoschema och Mina bokningar finns Prenumerera på mina pass. Länken l�
 Kalenderexporter och prenumerationer innehåller en DISPLAY-påminnelse 12 timmar före varje pass (VALARM). Kalenderappen avgör hur importerade påminnelser hanteras. Restid och avresepåminnelser ställs in i kalenderappen; portalen beräknar inte restid. Informationssidan heter Praktisk information.
 
 ### Återkommande bokningar och bemanning (0.4.001)
-Öppna ett framtida ordinarie pass och välj Boka återkommande. Välj varje, varannan eller var fjärde vecka och ett slutdatum inom det öppna schemat (högst sex veckor). Förhandsgranska innan bokning. Inställda eller saknade pass hoppas över och redan bokade pass behålls. Överlappningar och minst sju anmälda kräver separat bekräftelse. Hela bokningen sker i en transaktion och kräver ny förhandsgranskning om planen ändrats. Varje pass avbokas separat enligt vanliga regler; serien förlängs inte automatiskt. Styrelsen kan boka åt vald volontär.
+Öppna ett framtida ordinarie pass och välj **Boka det här passet återkommande**. Bokningen gäller samma veckodag och klockslag. Välj varje, varannan eller var fjärde vecka och ett slutdatum inom det öppna schemat (högst sex veckor). Förhandsgranska innan bokning. Inställda eller saknade pass hoppas över och redan bokade pass behålls. Överlappningar och minst sju anmälda kräver separat bekräftelse. Hela bokningen sker i en transaktion och kräver ny förhandsgranskning om planen ändrats. Varje pass avbokas separat enligt vanliga regler; serien förlängs inte automatiskt. Styrelsen kan boka åt vald volontär.
 Bemanning visas för admin och superadmin med en lista för kommande 42 dagar: färre än två bokade eller ingen grönmarkerad person. Även veckoschemat visar om en grönmarkerad person är bokad. Detta är planeringsstöd utan bokningsspärr. Rutinerade, manuellt gröna och administratörer räknas. Överlämning sker på whiteboardtavlan på plats, vilket också förklaras i Praktisk information och introduktionschecklistan. Ersättare hanteras i Messenger.
 
 Efter varje automatiskt öppet hus skapas en separat bokningsbar Volontärsträff kl. 15–16. Admin och superadmin kan ändra Information om träffen samt flytta eller ställa in händelsen. Ursprungstillfället sparas så att en flyttad eller inställd träff inte återskapas vid omstart.
@@ -293,7 +293,7 @@ Volontärprofilen har en administrativ kryssruta Har fått volontärspåse. Den 
 
 Vid denna uppgradering införs must_change_password med standardvärde 1. Befintliga lösenord/hashvärden behålls. Konton vars e-post inte slutar på .local behöver välja ett annat lösenord vid nästa användning; andra API-anrop blockeras tills bytet är klart. Flaggan nollställs vid eget verifierat byte eller återställning via e-post. Nytt startlösenord eller administrativ återställning kräver eget byte igen. Migrationen kör inte om kravet vid varje start. .local är ett uttryckligt undantag, inte en metod för riktiga användarkonton.
 
-Formuläret för nya konton föreslår unika tillfälliga lösenord med webbläsarens kryptografiska slumptalsgenerator. Inget gemensamt standardlösenord införs. CSV-import behåller uttryckligen tilldelade startlösenord från filen; välj ett unikt per person. Inga lösenord skickas automatiskt via e-post. Tidsbegränsad lösenordsbytesvy exponerar inga scheman, nyheter eller andra profiler. Gatewayn kontrollerar originalkontots krav även vid tilldelad åtkomst till andra katthem; interna skuggkonton kan inte användas för att kringgå det. Vid flytt följer lösenordsbyteskravet med kontot.
+Formuläret för nya konton föreslår unika tillfälliga lösenord med webbläsarens kryptografiska slumptalsgenerator. Inget gemensamt standardlösenord införs. CSV-import skapar ett unikt slumpat tillfälligt lösenord på servern när kolumnen lösenord saknas eller fältet är tomt. Äldre filer med uttryckliga startlösenord på 10–200 tecken fungerar fortfarande. Inga lösenord skickas automatiskt via e-post. Tidsbegränsad lösenordsbytesvy exponerar inga scheman, nyheter eller andra profiler. Gatewayn kontrollerar originalkontots krav även vid tilldelad åtkomst till andra katthem; interna skuggkonton kan inte användas för att kringgå det. Vid flytt följer lösenordsbyteskravet med kontot.
 
 Manuell testning: kontrollera nytt färgval, logotyp och standardåterställning i ett hem, växla till ett annat, kontrollera påsmarkering och prova ett icke-.local-konto med krav på byte. Publicering till GitHub görs separat på begäran.
 
@@ -664,4 +664,22 @@ För styrelse- och administratörskonton visar profilen en förklaring i ställe
 ### Mobilbredd (0.6.050)
 Långa e-postadresser och länkar bryts över rader i huvudinnehåll, sidhuvud och dialoger. Flex- och gridinnehåll får krympa till tillgänglig bredd. Mobilhuvudet placerar logotyp och meny i separata kolumner utan överlappning. Formulär använder en kolumn vid högst 600 px och textfält minst 16 px på mobil för att undvika automatisk inzoomning vid fokus i iOS. Ingen global döljning av horisontellt överflöde används; innehållet förblir tillgängligt.
 
-Bokningsdialogen visar Boka det här passet med namn, datum och klockslag samt huvudknappen Bekräfta bokning av detta pass. Återkommande bokning ligger separat under Vill du boka fler pass? (valfritt), hopfällt från början. Ordinarie bokningsregler, avbokning och adminverktyg är oförändrade. Ingen extra informationsruta har lagts ovanför veckoschemat.
+Bokningsdialogen visar Boka det här passet med namn, datum och klockslag samt huvudknappen Bekräfta bokning av detta pass. Återkommande bokning ligger separat under Boka det här passet återkommande, hopfällt från början. Ordinarie bokningsregler, avbokning och adminverktyg är oförändrade. Ingen extra informationsruta har lagts ovanför veckoschemat.
+
+Vid sparning av **Introduktion genomförd och godkänd** får portalen bara tillbaka volontärens introduktionsstatus och eventuell plats i listan över väntande introduktioner. Den öppna profilen uppdaterar kryssrutan och meddelandet på plats. Volontärslistan byggs inte om.
+
+### Cachevalidering och mindre svar
+
+JavaScript och CSS i den inloggade portalen valideras med ETag. Oförändrade filer återanvänds från webbläsarens cache. När manuell grönmarkering sparas från en volontärprofil skickar servern tillbaka ändrad grönstatus och berörda pass, och volontärprofilen ligger kvar öppen.
+
+Visningsskärmen skickar en revisionsnyckel för veckoschemat. Servern kontrollerar visningsbehörigheten vid varje anrop, men utelämnar passkorten om schemat är oförändrat. Incheckning, QR-kod och status hanteras i varje svar.
+
+## Bemanning för ett eller flera katthem
+
+I Bemanning kan styrelsemedlemmar med administratörsbehörighet för flera katthem välja Huskvarna, Värnamo eller Alla mina katthem. Vyn börjar på valt katthem. Det gemensamma valet visar kommande pass i datumordning med katthemmets namn och samma filter för pass som behöver stöd. När ett pass hanteras från ett annat katthem växlar portalen till det katthemmet. Vid förhinder mindre än 24 timmar före ett pass meddelar volontären fortfarande katthemmets bemanningsgrupp i Messenger.
+
+## Uppföljningsmejl efter 60 dagar
+
+Admin kan under **Administration → Uppföljning och kontakt → Volontärer att följa upp** öppna inställningen för 60-dagarsmejl. Utskick är avstängda från början per katthem. Förhandsgranskningen visar aktuella mottagare innan admin aktiverar funktionen. E-post måste vara konfigurerad.
+
+Aktiva volontärer får ett mejl per uppehåll efter 60 dagar från sitt senaste avslutade bokade pass, eller från registrering för den som saknar avslutade pass. Volontären loggar in och bekräftar under **Mitt konto → Mitt engagemang**, där det också går att pausa eller avsluta enligt vanliga regler. Admin ser skickade mejl och bekräftelser i samma uppföljning. Ett uteblivet svar påverkar varken konto, bokningsbehörighet eller gallring. Tillfälliga leveransfel prövas igen högst sex gånger totalt.
