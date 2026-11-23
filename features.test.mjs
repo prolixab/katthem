@@ -327,3 +327,25 @@ test('.local-konton får inga välkomst-, återställnings-, påminnelse- eller 
  const changes=createNotifications(db,provider),before=db.prepare('SELECT * FROM slots').get();changes.queue(before,{...before,note:'Ny text'});db.prepare('INSERT INTO change_notifications(id,user_id,subject,text) VALUES(?,?,?,?)').run('old-local',3,'Äldre kö','Text');assert.equal(changes.status().pending,1);await changes.run();assert.equal(sent.length,2);assert.ok(sent.every(m=>m.to==='anna@example.se'));assert.equal(changes.status().pending,0);assert.equal(db.prepare("SELECT attempts FROM change_notifications WHERE id='old-local'").get().attempts,0);
  }finally{db.close()}
 });
+
+test('Checklistans omritning behåller synlig punkt, fokus, öppna avsnitt och pågående kryss',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),start=source.indexOf('function renderChecklistPreservingPosition('),fn=source.slice(start,source.indexOf('\nfunction updateChecklistCount',start));
+ const scrolls=[],focus=[],make=(id,top,checked=false)=>({dataset:{checklistItem:id},checked,disabled:false,getBoundingClientRect:()=>({top,bottom:top+20}),focus:o=>focus.push([id,o.preventScroll])});
+ let controls=[make('a',120),make('b',200,true)];const sections=[{dataset:{adminSection:'info-introduction'},open:true},{dataset:{adminSection:'manual'},open:false}],open=new Set(['manual']);
+ const win={scrollY:700,scrollX:0,innerHeight:700,scrollTo:o=>scrolls.push(o)},context={app:{querySelectorAll:s=>s==='[data-checklist-item]'?controls:sections},window:win,document:{activeElement:controls[0]},checklistSaving:new Set(['b']),adminSectionsOpen:open,render:()=>{win.scrollY=0;controls=[make('a',820),make('b',900,false)]}};
+ runInNewContext(fn+';renderChecklistPreservingPosition()',context);
+ assert.equal(scrolls[0].top,700);assert.equal(scrolls[0].behavior,'instant');assert.deepEqual(focus,[['a',true]]);assert.equal(controls[1].checked,true);assert.equal(controls[1].disabled,true);assert.ok(open.has('info-introduction'));assert.ok(!open.has('manual'));
+});
+
+test('Checklistans sparning skiljer sparfel från uppdateringsfel och ignorerar svar efter byte av katthem',async()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),start=source.indexOf('async function saveChecklistItem('),fn=source.slice(start,source.indexOf('\nfunction ',start+1));
+ for(const mode of ['saved-refresh-fails','save-fails','changed-home']){
+  const input={dataset:{checklistItem:'a'},checked:true,disabled:false},status={},count={},saving=new Set();let home='one',renders=0;
+  const context={state:{user:{id:1},checklist:{checked_items:[],groups:[{items:[{id:'a'}]}]}},view:'info',portalRequestShelter:()=>home,checklistSaving:saving,document:{activeElement:null,body:{}},app:{querySelectorAll:()=>[input]},$:s=>s==='#checklist-status'?status:count,updateChecklistCount:()=>{},renderChecklistPreservingPosition:()=>renders++,toast:()=>{},api:async route=>{if(route==='checklist'){if(mode==='save-fails')throw Error('Sparfel');if(mode==='changed-home')home='two';return {}}throw Error('Uppdateringsfel')}};
+  await runInNewContext(fn+';saveChecklistItem(input)',{...context,input});
+  assert.equal(renders,0);assert.equal(saving.size,0);assert.equal(input.disabled,false);
+  if(mode==='saved-refresh-fails'){assert.equal(input.checked,true);assert.ok(context.state.checklist.checked_items.includes('a'));assert.match(status.textContent,/Krysset är sparat/)}
+  if(mode==='save-fails'){assert.equal(input.checked,false);assert.match(status.textContent,/Kunde inte spara/)}
+  if(mode==='changed-home')assert.deepEqual(context.state.checklist.checked_items,[]);
+ }
+});

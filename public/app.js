@@ -371,8 +371,43 @@ async function editChecklist(){
  form.onsubmit=async event=>{event.preventDefault();read();const button=form.querySelector('button.primary');button.disabled=true;try{const fresh=await api('checklist/template','PUT',{revision:template.revision,groups,applies_to:template.applies_to},home);if(state.user.id!==userId||portalRequestShelter('checklist/template')!==home||!form.isConnected)return;state=fresh;modal.close();render();toast('Checklistan är uppdaterad. Befintliga kryss är bevarade.')}catch(err){if(form.isConnected)form.querySelector('.error').textContent=err.message}finally{button.disabled=false}};
  };draw();}catch(err){toast(err.message)}
 }
-function volunteerChecklist(){const checklist=state.checklist;if(!checklist)return '';const ids=new Set(checklist.groups.flatMap(g=>g.items.map(item=>item.id))),checked=new Set(checklist.checked_items.filter(id=>ids.has(id))),total=ids.size;return `<section class="panel onboarding-checklist" id="introduction-checklist" tabindex="-1"><h2>Min första tid på katthemmet</h2><p>Gå igenom checklistan tillsammans med en erfaren volontär. Kryssa i det du har gått igenom; du kan ta bort ett kryss om du vill återkomma till punkten. Arbetsinstruktionerna finns analogt på katthemmet.</p><p class="small"><strong id="checklist-count">${checked.size} av ${total} punkter klara</strong> · <span id="checklist-status" role="status" aria-live="polite">Dina personliga kryss sparas automatiskt. ${isAdmin(state.user)?'Admin och superadmin är gröna genom sin roll. Du kan ändå gå igenom och fylla i din egen checklista.':'Alla punkter krävs för grönmarkering, även vid manuell markering.'} Kontrollera och uppdatera också din profil under Mitt konto.</span></p>${checklist.groups.map(group=>`<fieldset><legend>${esc(group.title)}</legend>${group.items.map(item=>`<label class="check-label checklist-item"><input type="checkbox" data-checklist-item="${esc(item.id)}" ${checked.has(item.id)?'checked':''}><span>${esc(item.text)}</span></label>`).join('')}</fieldset>`).join('')}</section>`}
-async function saveChecklistItem(input){const id=input.dataset.checklistItem,checked=input.checked,userId=state.user.id;checklistSaving.add(id);input.disabled=true;if($('#checklist-status'))$('#checklist-status').textContent='Sparar…';try{await api('checklist','PATCH',{item_id:id,checked});if(state?.user.id!==userId)return;const items=new Set(state.checklist.checked_items);if(checked)items.add(id);else items.delete(id);state.checklist.checked_items=[...items];const fresh=await api('state');if(state?.user.id===userId){state=fresh;render()}const total=state.checklist.groups.reduce((n,g)=>n+g.items.length,0);if($('#checklist-count'))$('#checklist-count').textContent=`${items.size} av ${total} punkter klara`;if($('#checklist-status'))$('#checklist-status').textContent='Dina kryss är sparade.'}catch(err){input.checked=!checked;if($('#checklist-status'))$('#checklist-status').textContent='Kunde inte spara. Försök igen.';toast(err.message)}finally{checklistSaving.delete(id);input.disabled=false;if(checklistSaving.size&&$('#checklist-status'))$('#checklist-status').textContent='Sparar…'}}
+function volunteerChecklist(){const checklist=state.checklist;if(!checklist)return '';const ids=new Set(checklist.groups.flatMap(g=>g.items.map(item=>item.id))),checked=new Set(checklist.checked_items.filter(id=>ids.has(id))),total=ids.size;return `<section class="panel onboarding-checklist" id="introduction-checklist" tabindex="-1"><h2>Min första tid på katthemmet</h2><p>Gå igenom checklistan tillsammans med en erfaren volontär. Kryssa i det du har gått igenom; du kan ta bort ett kryss om du vill återkomma till punkten. Arbetsinstruktionerna finns analogt på katthemmet.</p><p class="small"><strong id="checklist-count">${checked.size} av ${total} punkter klara</strong> · <span id="checklist-status" role="status" aria-live="polite">Dina kryss sparas automatiskt.</span></p><p class="small">${isAdmin(state.user)?'Admin och superadmin är gröna genom sin roll. Du kan ändå gå igenom och fylla i din egen checklista.':'Alla punkter krävs för grönmarkering, även vid manuell markering.'} Kontrollera och uppdatera också din profil under Mitt konto.</p>${checklist.groups.map(group=>`<fieldset><legend>${esc(group.title)}</legend>${group.items.map(item=>`<label class="check-label checklist-item"><input type="checkbox" data-checklist-item="${esc(item.id)}" ${checked.has(item.id)?'checked':''}><span>${esc(item.text)}</span></label>`).join('')}</fieldset>`).join('')}</section>`}
+function renderChecklistPreservingPosition(){
+ const controls=[...app.querySelectorAll('[data-checklist-item]')],scroll={top:window.scrollY,left:window.scrollX},focusId=document.activeElement?.dataset?.checklistItem;
+ const anchor=controls.find(control=>{const r=control.getBoundingClientRect();return r.bottom>0&&r.top<window.innerHeight}),anchorId=anchor?.dataset.checklistItem,anchorTop=anchor?.getBoundingClientRect().top;
+ const pending=new Map(controls.filter(control=>checklistSaving.has(control.dataset.checklistItem)).map(control=>[control.dataset.checklistItem,control.checked]));
+ app.querySelectorAll('[data-admin-section]').forEach(section=>{if(section.open)adminSectionsOpen.add(section.dataset.adminSection);else adminSectionsOpen.delete(section.dataset.adminSection)});
+ render();
+ const replacements=[...app.querySelectorAll('[data-checklist-item]')];
+ for(const control of replacements)if(pending.has(control.dataset.checklistItem)){control.checked=pending.get(control.dataset.checklistItem);control.disabled=true}
+ replacements.find(control=>control.dataset.checklistItem===focusId)?.focus({preventScroll:true});
+ const replacement=replacements.find(control=>control.dataset.checklistItem===anchorId);
+ window.scrollTo({top:Math.max(0,replacement?window.scrollY+replacement.getBoundingClientRect().top-anchorTop:scroll.top),left:scroll.left,behavior:'instant'});
+}
+function updateChecklistCount(){if(!state?.checklist)return;const ids=new Set(state.checklist.groups.flatMap(group=>group.items.map(item=>item.id))),completed=state.checklist.checked_items.filter(id=>ids.has(id)).length;if($('#checklist-count'))$('#checklist-count').textContent=completed+' av '+ids.size+' punkter klara'}
+async function saveChecklistItem(input){
+ const id=input.dataset.checklistItem,checked=input.checked,userId=state.user.id,home=portalRequestShelter('checklist'),savedView=view,wasFocused=document.activeElement===input;
+ if(checklistSaving.has(id))return;checklistSaving.add(id);input.disabled=true;let saved=false;
+ const current=()=>state?.user.id===userId&&portalRequestShelter('checklist')===home;
+ if($('#checklist-status'))$('#checklist-status').textContent='Sparar…';
+ try{
+  await api('checklist','PATCH',{item_id:id,checked},home);saved=true;if(!current())return;
+  const items=new Set(state.checklist.checked_items);if(checked)items.add(id);else items.delete(id);state.checklist.checked_items=[...items];updateChecklistCount();
+  const fresh=await api('state','GET',undefined,home);if(!current())return;
+  // Preserve newer checkbox choices while other saves are still in flight.
+  const pendingItems=new Set(fresh.checklist.checked_items);
+  if(view===savedView)app.querySelectorAll('[data-checklist-item]').forEach(control=>{if(checklistSaving.has(control.dataset.checklistItem)){if(control.checked)pendingItems.add(control.dataset.checklistItem);else pendingItems.delete(control.dataset.checklistItem)}});
+  fresh.checklist.checked_items=[...pendingItems];state=fresh;
+  if(view===savedView){renderChecklistPreservingPosition();updateChecklistCount();if($('#checklist-status'))$('#checklist-status').textContent='Dina kryss är sparade.'}
+ }catch(err){
+  if(!current()||view!==savedView)return;
+  if(!saved){input.checked=!checked;const control=[...app.querySelectorAll('[data-checklist-item]')].find(control=>control.dataset.checklistItem===id);if(control)control.checked=!checked}
+  if($('#checklist-status'))$('#checklist-status').textContent=saved?'Krysset är sparat, men översikten kunde inte uppdateras.':'Kunde inte spara. Försök igen.';toast(err.message);
+ }finally{
+  checklistSaving.delete(id);input.disabled=false;
+  if(current()&&view===savedView){const control=[...app.querySelectorAll('[data-checklist-item]')].find(control=>control.dataset.checklistItem===id);if(control){control.disabled=false;if(wasFocused&&!checklistSaving.size&&document.activeElement===document.body)control.focus({preventScroll:true})}if(checklistSaving.size&&$('#checklist-status'))$('#checklist-status').textContent='Sparar…'}
+ }
+}
 function portalManual(){
  const admin=isAdmin(state.user),superadmin=isSuperAdmin(state.user);
  const chapters=[
@@ -532,6 +567,7 @@ function portalManual(){
   'Den fullständiga volontärslistan, födelsedatum och andra privata profiluppgifter visas bara för admin och superadmin.'
  ]],
  ['Mitt konto och glömt lösenord',[
+ 'När du kryssar i eller ur introduktionschecklistan sparas ändringen utan att du flyttas till sidans början. Din plats i listan, öppna avsnitt och fokus på checklistpunkten behålls. Räknaren visar hur många punkter som är klara. Vänta på sparbekräftelsen; om sparningen misslyckas visas ett fel och krysset återställs.',
  'Mitt konto → Min introduktionschecklista öppnar dina egna checklistpunkter. Du kan läsa och fylla i listan även när du är grönmarkerad och introduktionen redan är godkänd. Samma lista finns under Praktisk information → Introduktion och stöd. Kryss sparas automatiskt; de fylls inte i åt dig.',
  'Välkomstmejl, lösenordsmejl, påminnelser och mejl om passändringar visar portalens vanliga adress separat under Hitta tillbaka till Tassportalen. Spara gärna adressen som ett bokmärke. Den vanliga adressen används för att hitta tillbaka; när du ska välja eller återställa lösenord använder du den personliga engångslänken i mejlet.',
   'Byt lösenord under Mitt konto genom att ange ditt nuvarande och ett nytt lösenord med 10–200 tecken.',

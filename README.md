@@ -691,3 +691,7 @@ CSV-importen jämför e-postadresser utan skillnad på stora/små bokstäver och
 ## Lokala tillfälliga konton och mejl
 
 Adresser som slutar på `.local` (utan skillnad på stora/små bokstäver eller omgivande blanksteg) är lokala tillfälliga konton. De kan importeras men köas inte för välkomstmejl och får inte återställningsmejl, passpåminnelser eller ändrings-/inställelsemejl. Den gemensamma mejlleverantören stoppar också sådana mottagare före Gmail/Resend som extra skydd. Redan köade ändringsmejl till .local skickas inte och räknas inte som väntande eller misslyckade. Vid lokal inloggning kan ett känt tillfälligt lösenord anges i CSV-filen; ingen lösenordslänk skickas.
+
+## Checklistan behåller scrolläge vid sparning
+
+Efter att en introduktionspunkt sparats hämtas aktuell status och sidan uppdateras med den synliga checklistpunkten kvar på samma plats i visningsytan. Tangentbordsfokus, öppna avsnitt och andra pågående checklistval bevaras. Scrollpositionen fångas precis före omritningen, så användaren kan fortsätta rulla under sparningen. Ett svar från ett tidigare katthem eller konto får inte rita om den aktuella vyn. Om krysset sparats men statusuppdateringen misslyckas anges detta utan att den sparade ändringen återställs i gränssnittet.
