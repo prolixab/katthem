@@ -8,6 +8,12 @@ Dubbelklicka på **Starta katthemmet.cmd**, eller kör `npm start` i denna mapp.
 
 Vid första starten skapas ett administratörskonto och ett volontärkonto med slumpade lösenord. Uppgifterna ligger i **data/lokala-konton.txt**. Byt lösenord under Mitt konto. Filen med startlösenorden uppdateras inte vid lösenordsbyte och kan därefter raderas.
 
+## Kopiera filer i Windows
+
+Dubbelklicka på **Filkopieraren.cmd**. Ange en källmapp per rad och avsluta med en tom rad. Ange filändelser, exempelvis `pdf, jpg, docx`, och välj en gemensam målmapp. Svara `j` för att söka även i undermappar. Målmappen skapas om den saknas.
+
+Originalen ligger kvar och namnkrockar får ett löpnummer, till exempel `bild (2).jpg`. Varje körning kopierar alla matchande filer igen.
+
 ## Driftsättning i Coolify
 
 1. Skapa en applikation från detta Git-repository och välj **Docker Compose** som byggmetod. Använd rotmappen och `/docker-compose.yml` som Compose-fil. Compose bygger appens image med den befintliga Dockerfilen.
@@ -660,3 +666,8 @@ En sparad manuell grönmarkering (`green_manual`) räknas nu i den gemensamma gr
 Den egna checklistan använder fortsatt `PATCH /api/checklist` med det inloggade kontots id. Ingen rätt att fylla i andras checklistor har lagts till. Admins läsvy över en annan persons framsteg är fortsatt skrivskyddad.
 
 För styrelse- och administratörskonton visar profilen en förklaring i stället för den tidigare låsta introduktionsrutan. Grönstatus genom rollen säger inte att frågorna har besvarats; faktisk checklistprogress visas separat. Volontärernas godkännanderuta fungerar som tidigare.
+
+### Mobilbredd (0.6.050)
+Långa e-postadresser och länkar bryts över rader i huvudinnehåll, sidhuvud och dialoger. Flex- och gridinnehåll får krympa till tillgänglig bredd. Mobilhuvudet placerar logotyp och meny i separata kolumner utan överlappning. Formulär använder en kolumn vid högst 600 px och textfält minst 16 px på mobil för att undvika automatisk inzoomning vid fokus i iOS. Ingen global döljning av horisontellt överflöde används; innehållet förblir tillgängligt.
+
+Bokningsdialogen visar Boka det här passet med namn, datum och klockslag samt huvudknappen Bekräfta bokning av detta pass. Återkommande bokning ligger separat under Vill du boka fler pass? (valfritt), hopfällt från början. Ordinarie bokningsregler, avbokning och adminverktyg är oförändrade. Ingen extra informationsruta har lagts ovanför veckoschemat.

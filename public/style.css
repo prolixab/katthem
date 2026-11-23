@@ -134,3 +134,33 @@ main h1,main h2,.sidebar .brand-copy>strong{color:var(--green)}
 /* Alphabetical volunteer sections preserve the existing card layout. */
 .member-alphabet{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 24px;align-items:center}.member-alphabet button{border:0;border-radius:6px;padding:6px 8px;min-width:30px;background:transparent;color:var(--green);font-size:16px;font-weight:700}.member-alphabet button:disabled{opacity:1;color:var(--muted);background:transparent;font-weight:400}.member-alphabet button:not(:disabled):hover{background:color-mix(in srgb,var(--green) 9%,white)}.member-alphabet button:focus-visible{outline:2px solid var(--green);outline-offset:2px}.member-letter-section{margin-top:26px}.member-letter-section[hidden]{display:none}.member-letter-section>h3{font-size:23px;line-height:1.4;color:var(--green);border-bottom:1px solid var(--line);padding-bottom:10px;margin:0 0 16px;scroll-margin-top:20px}.member-letter-section>h3:focus-visible{outline:2px solid var(--green);outline-offset:4px}.member-letter-section .member-grid{margin:0}
 @media(max-width:600px){.member-alphabet{flex-wrap:nowrap;overflow-x:auto;padding:4px 2px 8px;gap:2px;max-width:100%}.member-alphabet button{min-width:44px;min-height:44px;flex:0 0 44px}.member-letter-section>h3{font-size:21px}}
+
+/* Let real content wrap instead of widening the mobile viewport. */
+.layout{grid-template-columns:235px minmax(0,1fr)}
+main,.sidebar,.panel,.stat,.list-row>*,.actions,.toolbar>*,.topline>*,.form-grid>*{min-width:0}
+main,.sidebar,dialog{overflow-wrap:anywhere}
+input,select,textarea{min-width:0;max-width:100%}
+.export-link{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.legend{flex-wrap:wrap;row-gap:8px}
+#toast{max-width:calc(100vw - 32px);overflow-wrap:anywhere}
+@media(min-width:851px) and (max-width:1150px){.layout{grid-template-columns:195px minmax(0,1fr)}}
+@media(max-width:850px){
+ .sidebar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 12px;align-items:center}
+ .sidebar .brand-home{max-width:100%;width:100%}
+ .sidebar .menu-toggle{position:static;justify-self:end;padding:9px 10px}
+ .sidebar>.nav{grid-column:1/-1}
+ .brand-copy>strong{white-space:normal;overflow-wrap:anywhere}
+ .topline,.toolbar,.weeknav,.dialog-actions{flex-wrap:wrap}
+ .topline>.portal-choice{width:100%;max-width:360px}
+ .toolbar>*,.weeknav,.actions,.dialog-actions{max-width:100%}
+ input,select,textarea{font-size:16px}
+}
+@media(max-width:600px){
+ .form-grid{grid-template-columns:minmax(0,1fr)}
+ .panel{padding:18px}
+ dialog{padding:18px}
+ .help-row{grid-template-columns:30px minmax(0,1fr)}
+ .help-row button{grid-column:2;justify-self:start}
+}
+
+.single-booking{margin:24px 0 16px;padding:18px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:10px;background:color-mix(in srgb,var(--green) 5%,var(--surface,#fff))}.single-booking h3{margin:0 0 8px;font-size:18px}.single-booking p{margin:0 0 14px;font-size:14px}.single-booking>.primary{width:100%}.repeat-booking{border-top:1px solid var(--line);padding:14px 0;margin-top:12px}.repeat-booking summary{cursor:pointer;font-size:14px;color:var(--muted);font-weight:600}.repeat-booking p{font-size:13px;margin:12px 0}.repeat-booking summary:focus-visible{outline:2px solid var(--green);outline-offset:4px}
