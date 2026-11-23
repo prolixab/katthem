@@ -213,9 +213,13 @@ async function body(req,maxLength=20000){const chunks=[];let size=0;for await(co
 function importEntries(p){
  if(typeof p.green!=='boolean')fail('Välj om importen ska grönmarkeras.');
  let entries;try{entries=parseVolunteersCsv(p.csv)}catch(e){fail(e.message)}
- const seen=new Set();
- for(const entry of entries){if(seen.has(entry.email)||db.prepare('SELECT id FROM users WHERE email=?').get(entry.email))fail('E-postadressen finns redan: '+entry.email);seen.add(entry.email);entry.green=p.green||entry.green}
+ for(const entry of entries)entry.green=p.green||entry.green;
  return entries;
+}
+function selectImportEntries(entries){
+ const existing=new Set(db.prepare('SELECT email FROM users').all().map(u=>u.email.trim().toLowerCase())),seen=new Set(),users=[],skipped=[];
+ entries.forEach((entry,index)=>{const reason=existing.has(entry.email)?'existing':seen.has(entry.email)?'duplicate':null;seen.add(entry.email);if(reason)skipped.push({row:index+2,name:entry.name,email:entry.email,reason});else users.push(entry)});
+ return {users,skipped,total:entries.length};
 }
 function validateExtraInfo(value){if(typeof value!=='string'||value.length>1000)fail('Extra information får innehålla högst 1000 tecken.');}
 function validateSlot(p){
@@ -472,11 +476,11 @@ const server=http.createServer(async(req,res)=>{
  const passwordHash=hash(p.password);db.exec('BEGIN IMMEDIATE');try{const result=db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(p.name.trim(),p.email.trim().toLowerCase(),passwordHash,p.role||'volunteer',Date.now());if(p.member_id!==undefined){const updated=db.prepare('UPDATE member_profiles SET user_id=?,name=?,email=?,revision=revision+1,updated_at=? WHERE id=? AND user_id IS NULL AND revision=?').run(Number(result.lastInsertRowid),p.name.trim(),p.email.trim().toLowerCase(),Date.now(),p.member_id,p.member_revision);if(updated.changes!==1)fail('Medlemsprofilen har ändrats. Öppna den igen.',409)}passwordReset.enqueueWelcome(Number(result.lastInsertRowid));db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user));}
 
  if(['/api/users/import-preview','/api/users/import'].includes(url.pathname)&&req.method==='POST'){
-  const p=await body(req,1000000),entries=importEntries(p);
-  if(url.pathname.endsWith('import-preview'))return send({users:entries.map(({name,email,green})=>({name,email,green}))});
-  const prepared=entries.map(e=>({...e,passwordHash:hash(e.password||temporaryPassword())}));
-  db.exec('BEGIN IMMEDIATE');try{const insert=db.prepare('INSERT INTO users(name,email,password,green_manual,created_at) VALUES(?,?,?,?,?)');for(const e of prepared){const result=insert.run(e.name,e.email,e.passwordHash,e.green?1:0,Date.now());passwordReset.enqueueWelcome(Number(result.lastInsertRowid))}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
-  void passwordReset.runWelcome().catch(()=>{});return send(snapshot(user));
+  const p=await body(req,1000000),entries=importEntries(p),selection=selectImportEntries(entries);
+  if(url.pathname.endsWith('import-preview'))return send({users:selection.users.map(({name,email,green})=>({name,email,green})),skipped:selection.skipped,total:selection.total});
+  const hashes=new Map(selection.users.map(e=>[e.email,hash(e.password||temporaryPassword())]));let imported=0,finalSelection;
+  db.exec('BEGIN IMMEDIATE');try{finalSelection=selectImportEntries(entries);const insert=db.prepare('INSERT INTO users(name,email,password,green_manual,created_at) VALUES(?,?,?,?,?)');for(const e of finalSelection.users){const result=insert.run(e.name,e.email,hashes.get(e.email)||hash(e.password||temporaryPassword()),e.green?1:0,Date.now());passwordReset.enqueueWelcome(Number(result.lastInsertRowid));imported++}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}
+  if(imported)void passwordReset.runWelcome().catch(()=>{});return send({...snapshot(user),import_result:{imported,skipped:finalSelection.skipped,total:finalSelection.total}});
  }
  if(url.pathname.startsWith('/api/users/')&&req.method==='PATCH'){
   const id=Number(url.pathname.split('/').pop()),p=await body(req),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);

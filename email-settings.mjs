@@ -1,3 +1,4 @@
+import {isLocalAccount} from './password-policy.mjs';
 import nodemailer from 'nodemailer';
 import {randomBytes,createCipheriv,createDecipheriv,createHash} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,renameSync,unlinkSync} from 'node:fs';
@@ -40,6 +41,7 @@ export function createEmailSettings({store,dataDir,defaultUrl='',production=fals
   return settings();
  }
  async function gmailSend(message){
+  if(isLocalAccount(message.to))return {skipped:true};
   const saved=read();
   if(!saved?.secret)invalid('Spara Gmail-adress och applösenord innan du testar.');
   let transport;
@@ -49,6 +51,7 @@ export function createEmailSettings({store,dataDir,defaultUrl='',production=fals
   finally{transport?.close?.()}
  }
  async function send(message){
+  if(isLocalAccount(message.to))return {skipped:true};
   if(!status().configured)invalid('E-postpåminnelser är inte aktiverade.');
   if(read())return gmailSend(message);
   const response=await fetchImpl('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+fallback.apiKey,'Content-Type':'application/json','Idempotency-Key':message.key},body:JSON.stringify({from:fallback.from,to:[message.to],subject:message.subject,text:message.text}),signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error('E-posttjänsten svarade '+response.status);

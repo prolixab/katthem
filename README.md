@@ -60,7 +60,7 @@ Kör `npm test` för integrationstester av autentisering, behörighet, bokning o
 
 Volontärer ser sitt eget antal genomförda pass under Mina bokningar och Mitt konto. Admin ser allas antal i Administration och kan grönmarkera volontärer manuellt. Minst 10 genomförda pass och helt klar checklista ger automatisk grönmarkering. Manuell markering ersätter passkravet men kräver fortfarande klar checklista. Att ta bort en manuell markering tar inte bort den automatiska.
 
-Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Befintliga eller dubblerade e-postadresser stoppar hela importen. Nya volontärer väljer eget lösenord via välkomstmejlet. Om e-post är avstängd väntar utskicket.
+Under Administration → Importera volontärer (CSV) kan admin förhandsgranska och importera upp till 500 nya volontärer. Använd UTF-8, komma eller semikolon och rubrikerna `namn;e-post;grön`. Kolumnen `grön` är valfri och accepterar `ja` eller `nej`. Välj Grönmarkera alla i importen för att markera hela gruppen. Befintliga e-postadresser hoppas över. För nya adresser används första raden om samma adress upprepas i filen; senare rader hoppas över. Förhandsgranskningen och slutresultatet visar vad som importeras och hoppas över. Befintliga konton ändras inte. Nya volontärer väljer eget lösenord via välkomstmejlet. Om e-post är avstängd väntar utskicket.
 
 ## Lokal drift från Windows-nätverksenhet
 
@@ -683,3 +683,11 @@ I Bemanning kan styrelsemedlemmar med administratörsbehörighet för flera katt
 Admin kan under **Administration → Uppföljning och kontakt → Volontärer att följa upp** öppna inställningen för 60-dagarsmejl. Utskick är avstängda från början per katthem. Förhandsgranskningen visar aktuella mottagare innan admin aktiverar funktionen. E-post måste vara konfigurerad.
 
 Aktiva volontärer får ett mejl per uppehåll efter 60 dagar från sitt senaste avslutade bokade pass, eller från registrering för den som saknar avslutade pass. Volontären loggar in och bekräftar under **Mitt konto → Mitt engagemang**, där det också går att pausa eller avsluta enligt vanliga regler. Admin ser skickade mejl och bekräftelser i samma uppföljning. Ett uteblivet svar påverkar varken konto, bokningsbehörighet eller gallring. Tillfälliga leveransfel prövas igen högst sex gånger totalt.
+
+## Upprepad CSV-import
+
+CSV-importen jämför e-postadresser utan skillnad på stora/små bokstäver och utan omgivande blanksteg i det valda katthemmet. Förhandsgranskningen returnerar nya användare och en lista över överhoppade rader med orsak. Vid bekräftad import görs kontrollen igen i samma skrivtransaktion som skapar kontona, så en adress som tillkommit efter förhandsgranskningen hoppas över. Nya konton och välkomstkö skapas atomiskt. Återimport ändrar inga befintliga konton eller skapar nya välkomstinbjudningar åt dem. Alla-överhoppade är ett giltigt resultat med noll nya konton. Felaktiga värden och felaktigt CSV-format stoppar fortfarande importen före kontoskapande.
+
+## Lokala tillfälliga konton och mejl
+
+Adresser som slutar på `.local` (utan skillnad på stora/små bokstäver eller omgivande blanksteg) är lokala tillfälliga konton. De kan importeras men köas inte för välkomstmejl och får inte återställningsmejl, passpåminnelser eller ändrings-/inställelsemejl. Den gemensamma mejlleverantören stoppar också sådana mottagare före Gmail/Resend som extra skydd. Redan köade ändringsmejl till .local skickas inte och räknas inte som väntande eller misslyckade. Vid lokal inloggning kan ett känt tillfälligt lösenord anges i CSV-filen; ingen lösenordslänk skickas.

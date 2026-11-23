@@ -17,7 +17,7 @@ export function createPasswordReset(db,mailProvider,hashPassword,{now=()=>Date.n
  const message='Om adressen hör till ett aktivt konto och e-post är aktiverad skickas en återställningslänk. Kontrollera även skräpposten. Annars behöver du hjälp av administratören.';
  async function request(email){
   const user=db.prepare('SELECT id FROM users WHERE email=? AND active=1').get(String(email).trim().toLowerCase());
-  if(!user||!mailProvider.status().configured)return {message};
+  if(!user||isLocalAccount(email)||!mailProvider.status().configured)return {message};
   const time=now();db.prepare('DELETE FROM password_resets WHERE expires<=?').run(time);
   if(db.prepare('SELECT COUNT(*) n FROM password_resets WHERE user_id=? AND created_at>?').get(user.id,time-1800000).n>=3)return {message};
   const token=randomBytes(32).toString('hex'),tokenHash=digest(token);

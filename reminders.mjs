@@ -1,3 +1,4 @@
+import {isLocalAccount} from './password-policy.mjs';
 import { randomUUID } from 'node:crypto';
 export function createReminders(db,{apiKey,from,appUrl,fetchImpl=fetch,now=()=>Date.now(),mailProvider}={}){
  db.exec('CREATE TABLE IF NOT EXISTS reminder_delivery(booking_id INTEGER PRIMARY KEY REFERENCES bookings(id) ON DELETE CASCADE,delivery_key TEXT NOT NULL,sent_at INTEGER);');
@@ -11,7 +12,7 @@ export function createReminders(db,{apiKey,from,appUrl,fetchImpl=fetch,now=()=>D
    for(const row of rows){
     const starts=new Date(row.date+'T'+row.start+':00').getTime();if(starts<=now()||starts-now()>86400000)continue;
     // Re-read after any awaited send so cancelled bookings are excluded.
-    const booking=db.prepare('SELECT b.id,s.date,s.start,s.end,s.title,u.name,u.email FROM bookings b JOIN slots s ON s.id=b.slot_id JOIN users u ON u.id=b.user_id WHERE b.id=? AND s.cancelled=0 AND u.active=1').get(row.id);if(!booking)continue;
+    const booking=db.prepare('SELECT b.id,s.date,s.start,s.end,s.title,u.name,u.email FROM bookings b JOIN slots s ON s.id=b.slot_id JOIN users u ON u.id=b.user_id WHERE b.id=? AND s.cancelled=0 AND u.active=1').get(row.id);if(!booking||isLocalAccount(booking.email))continue;
     let delivery=db.prepare('SELECT * FROM reminder_delivery WHERE booking_id=?').get(row.id);if(delivery?.sent_at)continue;
     if(!delivery){db.prepare('INSERT INTO reminder_delivery(booking_id,delivery_key) VALUES(?,?)').run(row.id,randomUUID());delivery=db.prepare('SELECT * FROM reminder_delivery WHERE booking_id=?').get(row.id)}
     try{

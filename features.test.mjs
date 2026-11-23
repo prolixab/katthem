@@ -309,3 +309,21 @@ test('Egna checklistan är tillgänglig även för gröna, godkända, admin och 
  }
  const account=source.split('\n').find(l=>l.startsWith('function accountPage('));assert.match(account,/data-booking-help-target="introduction-checklist">Öppna min introduktionschecklista/);
 });
+
+
+test('CSV-förhandsgranskning visar överhoppade raders orsak och skyddar inmatad text',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),fn=source.split('\n').find(l=>l.startsWith('function importSkippedRows(')),context={esc:s=>String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;')};
+ const html=runInNewContext(fn+`;importSkippedRows([{row:2,name:'<Namn>',email:'known@example.se',reason:'existing'},{row:4,name:'Dubblett',email:'new@example.se',reason:'duplicate'}])`,context);
+ assert.match(html,/Överhoppade rader \(2\)/);assert.match(html,/Rad 2/);assert.match(html,/Kontot finns redan/);assert.match(html,/Adressen upprepas i filen/);assert.match(html,/&lt;Namn&gt;/);assert.doesNotMatch(html,/<Namn>/);assert.equal(runInNewContext(fn+';importSkippedRows([])',context),'');
+});
+
+
+test('.local-konton får inga välkomst-, återställnings-, påminnelse- eller ändringsmejl',async()=>{
+ const db=database(),sent=[];const now=new Date(2030,4,11,12).getTime(),provider={appUrl:()=> 'https://portal.example.se',status:()=>({configured:true}),send:async m=>sent.push(m)};
+ try{
+ db.exec("INSERT INTO users VALUES(3,'Tillfällig','temp@katthem.local',1,'hash');INSERT INTO slots VALUES(1,'2030-05-11','13:00','17:00','Testpass',2,'Mat',0,'regular');INSERT INTO bookings VALUES(1,3,1),(2,1,1)");
+ const reset=createPasswordReset(db,provider,p=>p,{now:()=>now});reset.enqueueWelcome(3);await reset.runWelcome();assert.equal(reset.welcomeStatus(3),null);await reset.request('Temp@Katthem.LOCAL');assert.equal(sent.length,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM password_resets').get().n,0);
+ const reminder=createReminders(db,{mailProvider:provider,now:()=>now});assert.equal((await reminder.run()).sent,1);assert.deepEqual(sent.map(m=>m.to),['anna@example.se']);assert.equal(db.prepare('SELECT COUNT(*) n FROM reminder_delivery WHERE booking_id=1').get().n,0);
+ const changes=createNotifications(db,provider),before=db.prepare('SELECT * FROM slots').get();changes.queue(before,{...before,note:'Ny text'});db.prepare('INSERT INTO change_notifications(id,user_id,subject,text) VALUES(?,?,?,?)').run('old-local',3,'Äldre kö','Text');assert.equal(changes.status().pending,1);await changes.run();assert.equal(sent.length,2);assert.ok(sent.every(m=>m.to==='anna@example.se'));assert.equal(changes.status().pending,0);assert.equal(db.prepare("SELECT attempts FROM change_notifications WHERE id='old-local'").get().attempts,0);
+ }finally{db.close()}
+});
