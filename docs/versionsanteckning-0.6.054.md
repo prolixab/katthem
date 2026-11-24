@@ -1,6 +1,6 @@
 # Versionsanteckning – version 0.6.054
 
-Praktisk information och manualen förtydligar att det finns två whiteboardtavlor: kontoret för uppgifter som inte hanns med och behöver göras klart av nästa pass, köket för information om rummen och mediciner. Båda tavlorna läses vid ankomst och kontorets tavla uppdateras före hemgång. Medicinering följer fortsatt papperslistan.
+Praktisk information och manualen förtydligar att det finns två whiteboardtavlor: kontoret för uppgifter som inte hanns med och behöver göras klart av nästa pass, köket för information om rummen och mediciner. Båda tavlorna läses vid ankomst. En separat instruktion vid avslutat pass ber de som lämnar att uppdatera kontorets tavla med det som inte hanns med och behöver göras klart av nästa pass. Medicinering följer fortsatt papperslistan.
 
 ## Utkast till uppdateringsnyhet
 
