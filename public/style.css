@@ -164,3 +164,19 @@ input,select,textarea{min-width:0;max-width:100%}
 }
 
 .single-booking{margin:24px 0 16px;padding:18px;border:1px solid var(--line);border-left:4px solid var(--green);border-radius:10px;background:color-mix(in srgb,var(--green) 5%,var(--surface,#fff))}.single-booking h3{margin:0 0 8px;font-size:18px}.single-booking p{margin:0 0 14px;font-size:14px}.single-booking>.primary{width:100%}.repeat-booking{border-top:1px solid var(--line);padding:14px 0;margin-top:12px}.repeat-booking summary{cursor:pointer;font-size:14px;color:var(--muted);font-weight:600}.repeat-booking p{font-size:13px;margin:12px 0}.repeat-booking summary:focus-visible{outline:2px solid var(--green);outline-offset:4px}
+
+/* Keep navigation reachable while the page itself scrolls. */
+.sidebar>.nav{flex-wrap:nowrap}
+@media(min-width:851px){
+ .layout>main{grid-column:2}
+ .sidebar{position:fixed;inset:0 auto 0 0;width:235px;height:100vh;height:100dvh;max-height:100dvh;overflow:hidden;z-index:20}
+ .sidebar>.brand-home{flex-shrink:0}
+ .sidebar>.nav{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+}
+@media(min-width:851px) and (max-width:1150px){.sidebar{width:195px}}
+@media(max-width:850px){
+ .sidebar{position:sticky;top:0;z-index:20;height:auto;max-height:100vh;max-height:100dvh;overflow:hidden;align-items:start;grid-template-rows:auto minmax(0,1fr);padding-top:calc(16px + env(safe-area-inset-top,0px));box-shadow:0 2px 8px #0000000a}
+ .sidebar>.brand-home,.sidebar>.menu-toggle{align-self:center}
+ .sidebar>.nav{min-height:0;align-self:stretch;max-height:calc(100vh - 140px - env(safe-area-inset-top,0px));max-height:calc(100dvh - 140px - env(safe-area-inset-top,0px));overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+ main [id],#home-heading,#schedule-heading{scroll-margin-top:130px}
+}

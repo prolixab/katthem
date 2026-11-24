@@ -698,3 +698,6 @@ Efter att en introduktionspunkt sparats hämtas aktuell status och sidan uppdate
 
 ### Whiteboardtavlor vid överlämning (0.6.054)
 Praktisk information → Inför och under ditt pass → Överlämning mellan pass och användarmanualen hänvisar till båda tavlorna. Kontorets tavla används för sådant som inte hanns med under föregående pass och som behöver göras klart. I köket finns information om rummen och mediciner. Volontärerna hänvisas till att läsa båda tavlorna när de kommer. Vid avslutat pass ska de som lämnar uppdatera kontorets tavla med det som inte hanns med och behöver göras klart av nästa pass. Medicinering följer fortsatt papperslistan på katthemmet.
+
+### Menyn ligger kvar vid rullning (0.6.055)
+På datorn ligger sidomenyn fast mot visningsytans överkant och huvudinnehållet behåller sin egen kolumn. På mobil är sidhuvudet med logotyp och menyknapp klistrat högst upp. Höjden begränsas till den tillgängliga skärmen (dvh där det stöds). Långa menylistor rullas internt så att logotyp och menyknapp ligger kvar, även på låga skärmar.
