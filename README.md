@@ -695,3 +695,6 @@ Adresser som slutar på `.local` (utan skillnad på stora/små bokstäver eller 
 ## Checklistan behåller scrolläge vid sparning
 
 Efter att en introduktionspunkt sparats hämtas aktuell status och sidan uppdateras med den synliga checklistpunkten kvar på samma plats i visningsytan. Tangentbordsfokus, öppna avsnitt och andra pågående checklistval bevaras. Scrollpositionen fångas precis före omritningen, så användaren kan fortsätta rulla under sparningen. Ett svar från ett tidigare katthem eller konto får inte rita om den aktuella vyn. Om krysset sparats men statusuppdateringen misslyckas anges detta utan att den sparade ändringen återställs i gränssnittet.
+
+### Whiteboardtavlor vid överlämning (0.6.054)
+Praktisk information → Inför och under ditt pass → Överlämning mellan pass och användarmanualen hänvisar till båda tavlorna. På kontorets tavla skrivs uppgifter som inte hanns med och behöver göras klart av nästa pass. I köket finns information om rummen och mediciner. Volontärerna läser båda tavlorna när de kommer och uppdaterar kontorets tavla innan de går. Medicinering följer fortsatt papperslistan på katthemmet.
