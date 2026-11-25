@@ -3,6 +3,7 @@ import {createHash,randomBytes} from 'node:crypto';
 export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.now()}){
  registry.exec(`CREATE TABLE IF NOT EXISTS volunteer_lineage(home TEXT NOT NULL,user_id INTEGER NOT NULL,person TEXT NOT NULL,PRIMARY KEY(home,user_id));CREATE TABLE IF NOT EXISTS retired_accounts(home TEXT NOT NULL,user_id INTEGER NOT NULL,PRIMARY KEY(home,user_id));CREATE TABLE IF NOT EXISTS volunteer_transfers(id INTEGER PRIMARY KEY,source TEXT NOT NULL,source_id INTEGER NOT NULL,target TEXT NOT NULL,target_id INTEGER NOT NULL,completed INTEGER NOT NULL,created_at INTEGER NOT NULL);`);
  registry.exec('CREATE TABLE IF NOT EXISTS volunteer_credits(person TEXT PRIMARY KEY,completed INTEGER NOT NULL DEFAULT 0)');
+ if(!registry.prepare('PRAGMA table_info(volunteer_credits)').all().some(c=>c.name==='green_completed'))registry.exec('ALTER TABLE volunteer_credits ADD COLUMN green_completed INTEGER');
  let extras=[];
  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
  function attached(p,action){
@@ -47,11 +48,12 @@ export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.n
    if(registry.prepare('PRAGMA move_target.table_info(users)').all().some(c=>c.name==='must_change_password'))registry.prepare('UPDATE move_target.users SET must_change_password=? WHERE id=?').run(x.user.must_change_password??1,targetId);
    registry.prepare('INSERT OR IGNORE INTO volunteer_lineage VALUES(?,?,?)').run(p.target,targetId,person);
    // Count distinct completed shifts across all known homes. No booking is copied between schedules.
-   const locations=registry.prepare('SELECT home,user_id FROM volunteer_lineage WHERE person=?').all(person);let total=registry.prepare('SELECT completed FROM volunteer_credits WHERE person=?').get(person)?.completed||0;
-   for(const home of new Set(locations.map(v=>v.home))){const alias=home===p.source?'move_source':home===p.target?'move_target':'move_history';const history=alias==='move_history'?new DatabaseSync(dbPath(home),{readOnly:true}):null;try{const ids=locations.filter(v=>v.home===home).map(v=>v.user_id);const rows=(history||registry).prepare('SELECT DISTINCT s.id,s.date,s.end FROM '+(history?'':alias+'.')+'bookings b JOIN '+(history?'':alias+'.')+'slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);total+=rows.filter(s=>new Date(s.date+'T'+s.end)<=now()).length}finally{if(history)history.close()}}
+   const locations=registry.prepare('SELECT home,user_id FROM volunteer_lineage WHERE person=?').all(person);const credits=registry.prepare('SELECT completed,green_completed FROM volunteer_credits WHERE person=?').get(person);let total=credits?.completed||0,greenTotal=credits?.green_completed??total;
+   for(const home of new Set(locations.map(v=>v.home))){const alias=home===p.source?'move_source':home===p.target?'move_target':'move_history';const history=alias==='move_history'?new DatabaseSync(dbPath(home),{readOnly:true}):null;try{const ids=locations.filter(v=>v.home===home).map(v=>v.user_id);const rows=(history||registry).prepare('SELECT DISTINCT s.id,s.date,s.end,s.kind FROM '+(history?'':alias+'.')+'bookings b JOIN '+(history?'':alias+'.')+'slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const completed=rows.filter(s=>new Date(s.date+'T'+s.end)<=now());total+=completed.length;greenTotal+=completed.filter(s=>s.kind!=='event').length}finally{if(history)history.close()}}
    const targetActual=registry.prepare('SELECT s.date,s.end FROM move_target.bookings b JOIN move_target.slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(targetId).filter(s=>new Date(s.date+'T'+s.end)<=now()).length;
    if(x.user.last_login_at!=null&&registry.prepare('PRAGMA move_target.table_info(users)').all().some(c=>c.name==='last_login_at'))registry.prepare('UPDATE move_target.users SET last_login_at=CASE WHEN last_login_at IS NULL OR last_login_at<? THEN ? ELSE last_login_at END WHERE id=?').run(x.user.last_login_at,x.user.last_login_at,targetId);
    registry.prepare('UPDATE move_target.users SET carried_shifts=? WHERE id=?').run(Math.max(0,total-targetActual),targetId);
+   const greenActual=registry.prepare("SELECT s.date,s.end FROM move_target.bookings b JOIN move_target.slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0 AND s.kind<>'event'").all(targetId).filter(s=>new Date(s.date+'T'+s.end)<=now()).length;registry.prepare('UPDATE move_target.users SET carried_green_shifts=? WHERE id=?').run(Math.max(0,greenTotal-greenActual),targetId);
    const fields=Object.keys(x.profile).filter(k=>!['id','user_id','revision','updated_at'].includes(k));const values=fields.map(k=>k==='volunteer_bag'?0:k==='shelter'?shelter(p.target).name:k==='board_role'?'none':k==='board_title'||k==='responsibilities'?'':k==='status'?'active':x.profile[k]);
    if(x.targetProfile)registry.prepare('UPDATE move_target.member_profiles SET '+fields.map(k=>k+'=?').join(',')+',revision=revision+1,updated_at=? WHERE id=?').run(...values,now(),x.targetProfile.id);
    else registry.prepare('INSERT INTO move_target.member_profiles('+fields.join(',')+',user_id,updated_at) VALUES('+[...values,targetId,now()].map(()=>'?').join(',')+')').run(...values,targetId,now());
@@ -64,9 +66,16 @@ export function createVolunteerTransfers(registry,{shelter,dbPath,now=()=>Date.n
    registry.prepare('DELETE FROM portal_sessions WHERE source=? AND user_id=?').run(p.source,x.user.id);registry.prepare('DELETE FROM grants WHERE source=? AND user_id=?').run(p.source,x.user.id);
    registry.prepare('DELETE FROM shadows WHERE source=? AND user_id=? AND target=? AND local_id=?').run(p.source,x.user.id,p.target,targetId);
    if(registry.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='portal_news_dismissals'").get())registry.prepare('INSERT INTO portal_news_dismissals(source,user_id,news_id,revision) SELECT ?,?,news_id,revision FROM portal_news_dismissals WHERE source=? AND user_id=? ON CONFLICT(source,user_id,news_id) DO UPDATE SET revision=MAX(revision,excluded.revision)').run(p.target,targetId,p.source,x.user.id);
+   // Shared event credits remain central; move the canonical booking identity instead of copying credits.
+   let sharedCompleted=0;
+   if(registry.prepare("SELECT 1 FROM sqlite_master WHERE name='shared_event_bookings'").get()){
+    registry.prepare('INSERT OR IGNORE INTO shared_event_bookings(event_id,source,user_id,home) SELECT event_id,?,?,home FROM shared_event_bookings WHERE source=? AND user_id=?').run(p.target,targetId,p.source,x.user.id);
+    registry.prepare('DELETE FROM shared_event_bookings WHERE source=? AND user_id=?').run(p.source,x.user.id);
+    sharedCompleted=registry.prepare('SELECT e.date,e.end FROM shared_event_bookings b JOIN shared_events e ON e.id=b.event_id WHERE b.source=? AND b.user_id=? AND e.cancelled=0').all(p.target,targetId).filter(e=>new Date(e.date+'T'+e.end)<=now()).length;
+   }
    registry.prepare('INSERT OR IGNORE INTO retired_accounts VALUES(?,?)').run(p.source,x.user.id);registry.prepare('DELETE FROM retired_accounts WHERE home=? AND user_id=?').run(p.target,targetId);
    registry.prepare('INSERT INTO volunteer_transfers(source,source_id,target,target_id,completed,created_at) VALUES(?,?,?,?,?,?)').run(p.source,x.user.id,p.target,targetId,total,now());
-   registry.exec('COMMIT');return {ok:true,target:p.target,user_id:targetId,completed_shifts:total};
+   registry.exec('COMMIT');return {ok:true,target:p.target,user_id:targetId,completed_shifts:total+sharedCompleted};
   }catch(e){registry.exec('ROLLBACK');throw e}
  })}
  return {preview,move};

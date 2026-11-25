@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export function createRecurringBookings(db,{recommendedLimit=()=>5}={}){
+export function createRecurringBookings(db,{recommendedLimit=()=>5,extraOverlap=()=>false}={}){
  const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
  function preview(uid,p,now=new Date()){
   if(!Number.isInteger(p.slotId)||![1,2,4].includes(p.interval)||typeof p.until!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(p.until))fail('Välj startpass, intervall och slutdatum.');
@@ -16,7 +16,7 @@ export function createRecurringBookings(db,{recommendedLimit=()=>5}={}){
    const row={date,start:anchor.start,end:anchor.end,slot_id:slot?.id||null,status:!slot?'missing':slot.cancelled?'cancelled':'new',over_limit:false,overlap:false};
    if(row.status==='new'){
     if(db.prepare('SELECT id FROM bookings WHERE user_id=? AND slot_id=?').get(uid,slot.id))row.status='already';
-    else{row.over_limit=db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=limit;row.overlap=Boolean(db.prepare('SELECT b.id FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0 AND s.date=? AND s.start<? AND s.end>? LIMIT 1').get(uid,date,slot.end,slot.start))}
+    else{row.over_limit=db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=limit;row.overlap=Boolean(db.prepare('SELECT b.id FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0 AND s.date=? AND s.start<? AND s.end>? LIMIT 1').get(uid,date,slot.end,slot.start))||extraOverlap(uid,slot)}
    }
    rows.push(row);
   }

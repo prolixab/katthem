@@ -4,7 +4,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 const dayLabel=date=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Stockholm',weekday:'long',day:'numeric',month:'short'}).format(new Date(date+'T12:00:00Z'));
 function closeCheckin(){const dialog=document.getElementById('checkin-dialog');if(dialog?.open){dialog.close();dialog.replaceChildren()}activePass='';activeChoices=''}
 function checkinControl(data,day,slot){
- if(!data.checkin||slot.cancelled)return '';
+ if(!data.checkin||slot.cancelled||!slot.key)return '';
  if(day.date!==data.today)return '<button class="future-checkin" disabled>Bekräftas på dagen</button>';
  return `<button class="pass-checkin" data-checkin-pass="${esc(slot.key)}">Jag är här</button>`;
 }
@@ -57,7 +57,7 @@ function render(data){
  const signature=JSON.stringify([data.today,data.show_names,Boolean(data.checkin),data.days]);
  latestSchedule=data;
  if(signature!==scheduleSignature){
-  schedule.innerHTML=data.days.map((day,i)=>`<section class="day ${day.date===data.today?'today':''} ${i&&day.week&&(day.week.number!==data.days[i-1].week?.number||day.week.year!==data.days[i-1].week?.year)?'week-start':''}"><p class="week-number">${day.week?'Vecka '+esc(day.week.number):''}</p><h2>${esc(dayLabel(day.date))}${day.date===data.today?' <span>Idag</span>':''}</h2>${day.slots.length?day.slots.map(slot=>`<article class="slot ${slot.cancelled?'cancelled':slot.booked<2?'needs-more':''}"><p class="time">${esc(slot.start)}–${esc(slot.end)}</p><h3>${esc(slot.title).replace(/Eftermiddagspass/g,'Eftermiddags&shy;pass').replace(/Socialiseringsgruppen/g,'Socialiserings&shy;gruppen')}</h3><p>${slot.cancelled?'Inställt':esc(slot.booked)+' bokade'+(slot.booked<2?' · Behöver fler':'')}</p>${data.show_names&&!slot.cancelled?`<ul>${slot.names.map(name=>`<li>${esc(name)}</li>`).join('')}</ul>`:''}${checkinControl(data,day,slot)}</article>`).join(''):'<p>Inga pass</p>'}</section>`).join('');
+  schedule.innerHTML=data.days.map((day,i)=>`<section class="day ${day.date===data.today?'today':''} ${i&&day.week&&(day.week.number!==data.days[i-1].week?.number||day.week.year!==data.days[i-1].week?.year)?'week-start':''}"><p class="week-number">${day.week?'Vecka '+esc(day.week.number):''}</p><h2>${esc(dayLabel(day.date))}${day.date===data.today?' <span>Idag</span>':''}</h2>${day.slots.length?day.slots.map(slot=>`<article class="slot ${slot.cancelled?'cancelled':slot.booked<(slot.minimum_staff??2)?'needs-more':''}"><p class="time">${esc(slot.start)}–${esc(slot.end)}</p>${slot.shared_event||slot.event?'<p class="small">Event</p>':''}<h3>${esc(slot.title).replace(/Eftermiddagspass/g,'Eftermiddags&shy;pass').replace(/Socialiseringsgruppen/g,'Socialiserings&shy;gruppen')}</h3><p>${slot.cancelled?'Inställt':esc(slot.booked)+' bokade'+(slot.minimum_staff?' av '+slot.minimum_staff+' som behövs':'')+(slot.booked<(slot.minimum_staff??2)?' · Behöver fler':'')}</p>${data.show_names&&!slot.cancelled?`<ul>${slot.names.map(name=>`<li>${esc(name)}</li>`).join('')}</ul>`:''}${checkinControl(data,day,slot)}</article>`).join(''):'<p>Inga pass</p>'}</section>`).join('');
   if(data.checkin)bindCheckin();
   scheduleSignature=signature;
  }

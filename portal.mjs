@@ -1,3 +1,4 @@
+import {createPortalEvents} from './portal-events.mjs';
 import {canonicalShelterName} from './shelter.mjs';
 import {createScheduleDisplay,displaySchedule,displayNames,createPresenceTickets,createPresenceGrants} from './display.mjs';
 import {readFileSync,createReadStream,statSync} from 'node:fs';
@@ -62,6 +63,11 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
  // Start every configured shelter so reminders and CSV jobs run independently.
  for(const h of houses())await worker(h.id);
  const portalNews=createPortalNews(registry,{shelter:house});
+ const eventAccount=(source,id)=>{const w=workers.get(source);if(!w||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(source,id)||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(source,id))return null;return w.db.prepare('SELECT u.id,u.name,u.active,u.role,e.status,m.birth_date FROM users u LEFT JOIN engagements e ON e.user_id=u.id LEFT JOIN member_profiles m ON m.user_id=u.id WHERE u.id=?').get(id)};
+ const sharedEvents=createPortalEvents(registry,{houses,account:eventAccount,access:(p,h)=>access(p,h),admin:(p,h)=>['admin','superadmin'].includes(access(p,h)),overlaps:(person,event)=>{
+  for(const [home,w] of workers){const id=home===person.source?person.user_id:registry.prepare('SELECT local_id FROM shadows WHERE source=? AND user_id=? AND target=?').get(person.source,person.user_id,home)?.local_id;if(id&&w.db.prepare('SELECT 1 FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0 AND s.date=? AND s.start<? AND s.end>?').get(id,event.date,event.end,event.start))return true;}return false;
+ }});
+ function eventOptions(p){const homes=houses().filter(h=>p.global||['admin','superadmin'].includes(access(p,h.id))),people=[];for(const h of homes)for(const u of workers.get(h.id).db.prepare('SELECT id FROM users WHERE active=1 ORDER BY name').all()){const account=eventAccount(h.id,u.id);if(account?.status==='active')people.push({source:h.id,user_id:u.id,name:account.name,home_name:h.name});}return {homes,people};}
  const transfers=createVolunteerTransfers(registry,{shelter:house,dbPath:id=>path.join(folder(id),'katthem.sqlite')});
  const lifecycle=createPortalEngagement(registry,{workers,houses});
  async function principal(token){
@@ -98,7 +104,8 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   }}return shadow.local_id;
  }
  // Internal collision addresses belong to local accounts, never to contact presentation.
- async function displayContactEmails(data,target){
+ async function displayContactEmails(data,target,p){
+  if(p&&data.user&&Array.isArray(data.slots)){const shared=sharedEvents.list(p,target),range=data.schedule_range;data.shared_events=shared;data.slots=[...data.slots,...shared.filter(e=>!range||e.mine||e.date>=range.start&&e.date<=range.end)];if(data.upcoming_events)data.upcoming_events=[...data.upcoming_events,...shared];data.event_options=eventOptions(p);}
   const local=await worker(target),emails=new Map();
   for(const link of registry.prepare('SELECT * FROM shadows WHERE target=?').all(target)){
    const alias=local.db.prepare('SELECT email FROM users WHERE id=?').get(link.local_id)?.email;
@@ -160,7 +167,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }
    if(url.pathname==='/api/display'){
     if(req.method!=='GET')fail('Endast läsning är tillåten.',405);const home=url.searchParams.get('shelter'),config=displays.authorizeRead(home,req.headers['x-display-key'],deviceToken(req,home));if(!house(home))fail('Visningslänken är ogiltig eller återkallad.',404);
-    res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow, noarchive');const w=await worker(home),data=displaySchedule(w.db,{name:house(home).name,...config,...(config.allow_checkin?{slotKey:(id,day)=>displayPassKey(home,req.headers['x-display-key'],day,id)}:{})});data.presence=null;data.security_enabled=config.security_enabled;data.device_registered=Boolean(config.device_hash);
+    res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Robots-Tag','noindex, nofollow, noarchive');const w=await worker(home),data=displaySchedule(w.db,{name:house(home).name,...config,...(config.allow_checkin?{slotKey:(id,day)=>displayPassKey(home,req.headers['x-display-key'],day,id)}:{})});for(const event of sharedEvents.list({source:home,user_id:-1,user:{role:'volunteer'},global:false},home)){const day=data.days.find(d=>d.date===event.date);if(day)day.slots.push({title:event.title,start:event.start,end:event.end,cancelled:!!event.cancelled,booked:event.cancelled?0:event.booked,minimum_staff:event.minimum_staff,shared_event:true,...(config.show_names?{names:event.cancelled?[]:event.names}:{})});}for(const day of data.days)day.slots.sort((a,b)=>a.start.localeCompare(b.start));data.presence=null;data.security_enabled=config.security_enabled;data.device_registered=Boolean(config.device_hash);
     const branding=readBranding(w.db);
     if(url.searchParams.get('profile')!==String(branding.revision)){
      const {primary,background,text,accent,logo,revision}=branding;
@@ -180,6 +187,32 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    if(p&&requiresPasswordChange(p.user)&&url.pathname.startsWith('/api/')){
     if(url.pathname==='/api/state'&&req.method==='GET')return send({password_change_required:true,user:{id:p.user.id,name:p.user.name,email:p.user.email,role:p.user.role,must_change_password:true},branding:createBranding((await worker(p.source)).db).get()});
     if(!['/api/password','/api/logout'].includes(url.pathname))return send({error:'Byt lösenord innan du fortsätter.',code:'PASSWORD_CHANGE_REQUIRED'},403);
+   }
+   // Shared event bookings belong to the canonical identity, not to a local shadow account.
+   if(p&&write){const fields=payload?json(payload):{},statusChange=['paused','inactive','ended'].includes(fields.status),disabled=fields.active===false||fields.active===0,match=url.pathname.match(/^\/api\/(?:engagements|users)\/(\d+)$/),self=['/api/engagement','/api/portal/engagement'].includes(url.pathname);
+    let person=null;if(self&&statusChange)person={source:p.source,user_id:p.user_id};else if(match&&(statusChange||disabled)&&access(p,target)&&['admin','superadmin'].includes(access(p,target))){const id=Number(match[1]),link=registry.prepare('SELECT source,user_id FROM shadows WHERE target=? AND local_id=?').get(target,id);person=link||{source:target,user_id:id};}
+    if(person){const pending=registry.prepare('SELECT e.* FROM shared_event_bookings b JOIN shared_events e ON e.id=b.event_id WHERE b.source=? AND b.user_id=? AND e.cancelled=0').all(person.source,person.user_id).filter(e=>new Date(e.date+'T'+e.end)>Date.now()&&(fields.scope==='all'||JSON.parse(e.targets).includes(target)));if(pending.length)return send({error:'Personen är bokad på gemensamma event. Avboka dessa via eventansvarig innan statusen ändras; vanliga pass hanteras av avbokningsbekräftelsen.',code:'SHARED_EVENT_BOOKINGS'},409);}
+    if(url.pathname.startsWith('/api/portal/')&&url.pathname.includes('/transfers')&&fields.source&&fields.user_id){const pending=registry.prepare('SELECT e.date,e.end FROM shared_event_bookings b JOIN shared_events e ON e.id=b.event_id WHERE b.source=? AND b.user_id=? AND e.cancelled=0').all(fields.source,fields.user_id).some(e=>new Date(e.date+'T'+e.end)>Date.now());if(pending)return send({error:'Avboka personens kommande gemensamma event före flytt av kontot.',code:'SHARED_EVENT_BOOKINGS'},409);}
+   }
+   if(url.pathname.startsWith('/api/_event/'))fail('Funktionen finns inte.',404);
+   if(url.pathname.startsWith('/api/portal/events')){
+    if(!p)fail('Logga in för att fortsätta.',401);
+    const match=url.pathname.match(/^\/api\/portal\/events(?:\/(\d+)(?:\/(bookings|cancel|people))?)?$/);if(!match)fail('Funktionen finns inte.',404);const id=Number(match[1]),action=match[2],fields=payload?json(payload):{};
+    if(!id&&req.method==='GET')return send({events:sharedEvents.list(p),options:eventOptions(p)});
+    if(!id&&req.method==='POST')return send({id:sharedEvents.save(p,null,fields)});
+    if(action==='people'&&req.method==='GET'){const event=sharedEvents.detail(p,id);if(!event.can_manage)fail('Du saknar eventansvar.',403);const people=[];for(const h of houses().filter(h=>event.targets.includes(h.id)))for(const row of workers.get(h.id).db.prepare('SELECT id FROM users WHERE active=1 ORDER BY name').all()){const u=eventAccount(h.id,row.id);if(u?.status==='active')people.push({source:h.id,user_id:row.id,name:u.name,home_name:h.name});}return send({people});}
+    if(id&&!action&&req.method==='GET')return send(sharedEvents.detail(p,id));
+    if(id&&!action&&req.method==='PUT')return send({id:sharedEvents.save(p,id,fields)});
+    if(action==='cancel'&&req.method==='POST'){sharedEvents.cancel(p,id,fields.revision);return send({ok:true});}
+    if(action==='bookings'&&req.method==='POST'){
+     const event=sharedEvents.detail(p,id),person=fields.person||{source:p.source,user_id:p.user_id},other=person.source!==p.source||person.user_id!==p.user_id;
+     if(!person||typeof person.source!=='string'||!Number.isInteger(person.user_id))fail('Välj en giltig deltagare.');if(other&&!event.can_manage)fail('Du får bara boka dig själv.',403);if(!eventAccount(person.source,person.user_id))fail('Volontären finns inte.',404);
+     const w=await worker(person.source),local=await fetch(w.address+'/api/_event/eligibility',{method:'POST',headers:{'x-portal-secret':secret,'content-type':'application/json','x-event-actor':secret},body:JSON.stringify({user_id:person.user_id,admin:other&&event.can_manage})});
+     const eligibility=await local.json();if(!local.ok)return send(eligibility,local.status);
+     sharedEvents.book(p,id,{...fields,person,intro_budget:eligibility.intro_budget,intro_started_at:eligibility.intro_started_at});return send({ok:true});
+    }
+    if(action==='bookings'&&req.method==='DELETE'){sharedEvents.cancelBooking(p,id,fields.person||p);return send({ok:true});}
+    fail('Metoden stöds inte.',405);
    }
    if(url.pathname==='/api/portal/display/security'){
     if(!p?.global)fail('Endast superadmin kan ändra säkerheten för det publika schemat.',403);if(req.method!=='PUT')fail('Metoden stöds inte.',405);const result=displays.security(target,json(payload));audit.record({home:target,actor:p,action:result.security_enabled?'display.security.enabled':'display.security.disabled',details:{}});return send(result);
@@ -212,6 +245,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
       bookings.push({...slot,shelter_id:h.id,shelter_name:h.name,location});
      }
     }
+    for(const event of sharedEvents.list(p).filter(e=>e.mine&&new Date(e.date+'T'+e.end)>Date.now()))bookings.push({...event,shelter_id:target,shelter_name:event.home_names.join(' + '),location:''});
     bookings.sort((a,b)=>(a.date+a.start+a.shelter_id).localeCompare(b.date+b.start+b.shelter_id));
     if(url.pathname.endsWith('/calendar')){
      const ics=calendarEvents(bookings.filter(b=>!b.cancelled),slot=>({appUrl:origin,location:slot.location,shelterId:slot.shelter_id}));
@@ -323,9 +357,9 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    const contentType=result.headers.get('content-type')||'',buffer=Buffer.from(await result.arrayBuffer());
    if(url.pathname==='/api/login'&&result.ok){
     const localToken=result.headers.get('set-cookie')?.match(/session=([a-f0-9]+)/)?.[1],data=JSON.parse(buffer);if(!localToken||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,data.user.id)||registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,data.user.id))fail('Logga in med ditt ordinarie konto.',401);
-    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);if(data.password_change_required){res.setHeader('Set-Cookie',cookie(newToken));return send(data)}if(!access(p,target)){const next=houses().find(h=>access(p,h.id));if(!next)fail('Engagemanget har avslutats och personuppgifterna har gallrats.',401);registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(next.id,newToken);res.setHeader('Set-Cookie',cookie(newToken));return send({redirect_home:true})}res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;return send(await displayContactEmails(data,target));
+    const newToken=randomBytes(32).toString('hex');registry.prepare('INSERT INTO portal_sessions VALUES(?,?,?,?,?,?)').run(newToken,target,data.user.id,localToken,target,Date.now()+86400000);p=await principal(newToken);if(data.password_change_required){res.setHeader('Set-Cookie',cookie(newToken));return send(data)}if(!access(p,target)){const next=houses().find(h=>access(p,h.id));if(!next)fail('Engagemanget har avslutats och personuppgifterna har gallrats.',401);registry.prepare('UPDATE portal_sessions SET selected=? WHERE token=?').run(next.id,newToken);res.setHeader('Set-Cookie',cookie(newToken));return send({redirect_home:true})}res.setHeader('Set-Cookie',cookie(newToken));if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;return send(await displayContactEmails(data,target,p));
    }
-   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.enabled!==undefined&&url.pathname.startsWith('/api/presence'))data.access_expires_at=await grantStatus(p,target);if(data.modules?.presence)data.modules.presence.access_expires_at=await grantStatus(p,target);if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(await displayContactEmails(data,target),result.status)}
+   if(contentType.includes('application/json')&&result.ok&&p){const data=JSON.parse(buffer);if(url.pathname==='/api/calendar/subscription'&&data.url)data.url=new URL(new URL(data.url).pathname,origin).href;if(data.enabled!==undefined&&url.pathname.startsWith('/api/presence'))data.access_expires_at=await grantStatus(p,target);if(data.modules?.presence)data.modules.presence.access_expires_at=await grantStatus(p,target);if(data.user){if(data.users)for(const u of data.users){u.portal_managed=Boolean(registry.prepare('SELECT 1 FROM shadows WHERE target=? AND local_id=?').get(target,u.id));u.transfer_retired=Boolean(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,u.id))};data.news=[...portalNews.visible(target,p),...(data.news||[])];data.bulletin_board=[...portalNews.board(target),...(data.bulletin_board||[])];if(p.global)data.portal_news_admin=portalNews.all();data.portal=metadata(p,target);data.portal.profile_identity_editable=target===p.source;data.shelter={name:house(target).name,configured:true,id:target};data.shelter_admin=data.user.role==='superadmin'||data.user.role==='admin'?data.shelter_admin:undefined}return send(await displayContactEmails(data,target,p),result.status)}
    for(const [key,value] of result.headers){if(!['set-cookie','connection','content-length','transfer-encoding','content-encoding'].includes(key))res.setHeader(key,value)}res.writeHead(result.status);res.end(buffer);
   }catch(e){if(res.headersSent){res.destroy();return}if(!e.status)console.error('Portal operation failed:',e.message);send({error:e.status?e.message:'Katthemmet kunde inte nås. Försök igen.',...(e.code?{code:e.code}:{})},e.status||503)}finally{if(tracked)activeRequests--}
  });

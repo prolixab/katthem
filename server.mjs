@@ -1,3 +1,5 @@
+import {sharedEventStats} from './shared-event-stats.mjs';
+import {eventStaffing,assertEventCapacity} from './event-staffing.mjs';
 import {createAgePolicy} from './age-policy.mjs';
 import {createPresence} from './presence.mjs';
 import {createBookingSettings} from './booking-settings.mjs';
@@ -51,17 +53,22 @@ const members=createMembers(db);
 const volunteers=createVolunteers(db,members,hash,{onCreated:id=>passwordReset.enqueueWelcome(id)});
 const news=createNews(db);
 const bookingSettings=createBookingSettings(db);
-const recurring=createRecurringBookings(db,{recommendedLimit:()=>bookingSettings.get().recommended_limit});
+function sharedIdentity(uid){const home=process.env.PORTAL_SHELTER_ID;return portalRegistry?.prepare('SELECT source,user_id FROM shadows WHERE target=? AND local_id=?').get(home,uid)||{source:home,user_id:uid}}
+function sharedOverlap(uid,slot){if(!portalRegistry?.prepare("SELECT 1 FROM sqlite_master WHERE name='shared_events'").get())return false;const person=sharedIdentity(uid);return Boolean(portalRegistry.prepare('SELECT 1 FROM shared_event_bookings b JOIN shared_events e ON e.id=b.event_id WHERE b.source=? AND b.user_id=? AND e.cancelled=0 AND e.date=? AND e.start<? AND e.end>?').get(person.source,person.user_id,slot.date,slot.end,slot.start));}
+function assertSharedOverlap(uid,slot,confirmed){if(!confirmed&&sharedOverlap(uid,slot))fail('Passet överlappar ett gemensamt event. Vill du boka ändå?',409,'OVERLAPPING_BOOKING');}
+const recurring=createRecurringBookings(db,{recommendedLimit:()=>bookingSettings.get().recommended_limit,extraOverlap:sharedOverlap});
 db.exec('CREATE TABLE IF NOT EXISTS calendar_subscriptions(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,token TEXT NOT NULL UNIQUE)');
 db.exec("CREATE TABLE IF NOT EXISTS door_access(id INTEGER PRIMARY KEY CHECK(id=1),code TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);INSERT OR IGNORE INTO door_access(id) VALUES(1);");
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='carried_shifts'))db.exec('ALTER TABLE users ADD COLUMN carried_shifts INTEGER NOT NULL DEFAULT 0');
+if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='carried_green_shifts'))db.exec('ALTER TABLE users ADD COLUMN carried_green_shifts INTEGER');
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='green_manual'))db.exec('ALTER TABLE users ADD COLUMN green_manual INTEGER NOT NULL DEFAULT 0');
 if(!db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='created_at')){
  db.exec('ALTER TABLE users ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0');db.prepare('UPDATE users SET created_at=?').run(Date.now());
 }
 if(!db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='kind'))db.exec("ALTER TABLE slots ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'");
 if(!db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='extra_info'))db.exec("ALTER TABLE slots ADD COLUMN extra_info TEXT NOT NULL DEFAULT ''");
-// capacity=0 means unlimited; every active shift needs at least two volunteers.
+if(!db.prepare('PRAGMA table_info(slots)').all().some(c=>c.name==='event_required'))db.exec('ALTER TABLE slots ADD COLUMN event_required INTEGER NOT NULL DEFAULT 2');
+// capacity=0 means unlimited; regular shifts need at least two volunteers.
 function sundayRules(date,start,end,title,note=''){
  const day=new Date(date+'T12:00:00');
  const sunday=day.getDay()===0;
@@ -143,6 +150,7 @@ if(process.env.PORTAL_SHELTER_ID){const baseAppUrl=emailSettings.appUrl;emailSet
 const reminders=createReminders(db,{mailProvider:emailSettings});
 const csvExports=createCsvExports(db,emailSettings,{shelterName:currentShelterName});
 const schedule=createSchedule(db,sundayRules);schedule.ensure();
+function assertPortalIntroduction(uid,options={}){engagements.assertBook(uid,options);}
 const notifications=createNotifications(db,emailSettings);
 const passwordReset=createPasswordReset(db,emailSettings,hash,{verifyPassword:verify,shelterId:process.env.PORTAL_SHELTER_ID});
 db.exec("CREATE TABLE IF NOT EXISTS volunteer_info(id INTEGER PRIMARY KEY CHECK(id=1),location TEXT NOT NULL DEFAULT '',access TEXT NOT NULL DEFAULT '',introduction TEXT NOT NULL DEFAULT '',routines TEXT NOT NULL DEFAULT ''); INSERT OR IGNORE INTO volunteer_info(id) VALUES(1)");
@@ -153,9 +161,10 @@ if(!db.prepare('SELECT name FROM migrations WHERE name=?').get('shelter-address-
 initPasswordPolicy(db);const branding=createBranding(db);
 db.exec("CREATE TABLE IF NOT EXISTS shift_routines(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL DEFAULT 0,daily TEXT NOT NULL,weekly_json TEXT NOT NULL)");
 if(!db.prepare('PRAGMA table_info(shift_routines)').all().some(c=>c.name==='temporary_json'))db.exec('ALTER TABLE shift_routines ADD COLUMN temporary_json TEXT');
+if(!db.prepare('PRAGMA table_info(shift_routines)').all().some(c=>c.name==='types_json'))db.exec('ALTER TABLE shift_routines ADD COLUMN types_json TEXT');
 const defaultShiftRoutines=['Storstäda köket och se över karantänen.','Storstäda rum 1 och 2.','Storstäda rum 4 och 5.','Storstäda entrén, tvättrum/toalett och städskrubbar.','Storstäda kontoret, valvet, gången genom katthemmet samt omklädningsrum.','Storstäda rum 6.','Storstäda rum 3 och 7.'];
 db.prepare('INSERT OR IGNORE INTO shift_routines(id,daily,weekly_json) VALUES(1,?,?)').run('Se över om något behöver städas. Töm återvinningen.',JSON.stringify(defaultShiftRoutines));
-function shiftRoutines(){const row=db.prepare('SELECT * FROM shift_routines WHERE id=1').get();return {revision:row.revision,daily:row.daily,weekly:JSON.parse(row.weekly_json),temporary:row.temporary_json?JSON.parse(row.temporary_json):null}}
+function shiftRoutines(){const row=db.prepare('SELECT * FROM shift_routines WHERE id=1').get();return {revision:row.revision,daily:row.daily,weekly:JSON.parse(row.weekly_json),types:row.types_json?JSON.parse(row.types_json):null,temporary:row.temporary_json?JSON.parse(row.temporary_json):null}}
 const ageSourceDatabases=new Map();
 function ageBirthDate(uid){
  const local=db.prepare('SELECT birth_date FROM member_profiles WHERE user_id=?').get(uid)?.birth_date||'';
@@ -169,21 +178,22 @@ const activityFollowup=createActivityFollowup(db,{mailProvider:emailSettings,las
 const agePolicy=createAgePolicy(db,{getBirth:ageBirthDate});
 const checklist=createChecklist(db);
 const checklistIds=new Set(checklistGroups.flatMap(group=>group.items.map(item=>item.id)));
-const engagements=createEngagement(db);engagements.setChecklistIds(checklistIds);engagements.setChecklistSource(checklist);
+const engagements=createEngagement(db,{extraIntroBookings:(uid,since)=>sharedEventStats(portalRegistry,process.env.PORTAL_SHELTER_ID,uid,{introStartedAt:since}).introBookings});engagements.setChecklistIds(checklistIds);engagements.setChecklistSource(checklist);
 const presence=createPresence(db,{canConfirm:uid=>{const e=engagements.get(uid);return Boolean(e?.account_active&&e.status==='active')}});
 db.exec('CREATE TABLE IF NOT EXISTS checklist_progress(user_id INTEGER NOT NULL REFERENCES users(id),item_id TEXT NOT NULL,PRIMARY KEY(user_id,item_id))');
 const fail=(message,status=400,code)=>{throw Object.assign(new Error(message),{status,code})};
 db.exec('CREATE INDEX IF NOT EXISTS slots_date_start ON slots(date,start); CREATE INDEX IF NOT EXISTS bookings_slot_id ON bookings(slot_id)');
 const sessions=db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE token=? AND expires>? AND active=1');
 function completedCounts(userId){
- const counts=new Map(),now=Date.now();counts.last=new Map();for(const u of db.prepare('SELECT id,carried_shifts FROM users').all())counts.set(u.id,u.carried_shifts);
- const rows=userId===undefined?db.prepare('SELECT b.user_id,s.date,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0').all():db.prepare('SELECT b.user_id,s.date,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id=?').all(userId);
- for(const b of rows){const ended=new Date(b.date+'T'+b.end+':00').getTime();if(ended<=now){counts.set(b.user_id,(counts.get(b.user_id)||0)+1);counts.last.set(b.user_id,Math.max(counts.last.get(b.user_id)||0,ended))}}
+ const counts=new Map(),now=Date.now();counts.last=new Map();counts.green=new Map();for(const u of db.prepare('SELECT id,carried_shifts,carried_green_shifts FROM users').all()){counts.set(u.id,u.carried_shifts);counts.green.set(u.id,u.carried_green_shifts??u.carried_shifts);}
+ const rows=userId===undefined?db.prepare('SELECT b.user_id,s.date,s.end,s.kind FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0').all():db.prepare('SELECT b.user_id,s.date,s.end,s.kind FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id=?').all(userId);
+ for(const b of rows){const ended=new Date(b.date+'T'+b.end+':00').getTime();if(ended<=now){counts.set(b.user_id,(counts.get(b.user_id)||0)+1);if(b.kind!=='event')counts.green.set(b.user_id,(counts.green.get(b.user_id)||0)+1);counts.last.set(b.user_id,Math.max(counts.last.get(b.user_id)||0,ended))}}
+ for(const uid of counts.keys()){if(userId!==undefined&&uid!==userId)continue;const event=sharedEventStats(portalRegistry,process.env.PORTAL_SHELTER_ID,uid,{now});counts.set(uid,(counts.get(uid)||0)+event.completed);if(event.lastCompleted)counts.last.set(uid,Math.max(counts.last.get(uid)||0,event.lastCompleted));}
  return counts;
 }
 function checklistComplete(uid){const checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return checklist.idsFor(uid).every(id=>checked.has(id))}
 function checklistProgress(uid){const ids=checklist.idsFor(uid),checked=new Set(db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(uid).map(r=>r.item_id));return {completed:ids.filter(id=>checked.has(id)).length,total:ids.length}}
-function publicUser(u,counts){const completed=counts.get(u.id)||0;return {checklist_progress:checklistProgress(u.id),last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,completed,checklistComplete(u.id))}}
+function publicUser(u,counts){const completed=counts.get(u.id)||0;return {checklist_progress:checklistProgress(u.id),last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,green_qualifying_shifts:counts.green.get(u.id)||0,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,counts.green.get(u.id)||0,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
 function pendingIntroduction(user,engagement){
  return user.active&&engagement?.awaiting_approval
@@ -195,7 +205,7 @@ function pendingIntroductions(user){
  return db.prepare("SELECT id,name,active FROM users WHERE active=1 AND role='volunteer' ORDER BY name").all().map(u=>pendingIntroduction(u,engagements.get(u.id))).filter(Boolean);
 }
 function scheduleGreenIds(counts){
- return new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
+ return new Set(db.prepare('SELECT id,role,green_manual FROM users').all().filter(u=>isGreen(u,counts.green.get(u.id)||0,checklistComplete(u.id))).map(u=>u.id));
 }
 function snapshot(user){
  if(requiresPasswordChange(user))return {password_change_required:true,user:{id:user.id,name:user.name,email:user.email,role:user.role,must_change_password:true},branding:branding.get()};
@@ -267,6 +277,9 @@ const server=http.createServer(async(req,res)=>{
   const booking=db.prepare('SELECT user_id FROM bookings WHERE id=?').get(p.booking_id);if(!booking)fail('Bokningen finns inte längre.',409);
   presence.confirm(booking.user_id,{kind:'booked',booking_id:p.booking_id});return send({ok:true});
  }
+ if(url.pathname==='/api/_event/eligibility'&&req.method==='POST'){
+  if(!process.env.GATEWAY_SECRET||req.headers['x-event-actor']!==process.env.GATEWAY_SECRET)fail('Funktionen finns inte.',404);const fields=await body(req),uid=Number(fields.user_id);engagements.assertBook(uid,{admin:fields.admin===true});const status=engagements.get(uid);return send({intro_budget:fields.admin||!status.intro_pending?null:status.intro_remaining+sharedEventStats(portalRegistry,process.env.PORTAL_SHELTER_ID,uid,{introStartedAt:status.intro_started_at}).introBookings,intro_started_at:status.intro_started_at});
+ }
  if(url.pathname==='/api/branding'&&req.method==='GET')return send(branding.get());
  if(url.pathname==='/healthz'&&req.method==='GET'){db.prepare('SELECT 1').get();return send({ok:true})}
  if(url.pathname.startsWith('/api/')){
@@ -314,7 +327,7 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/schedule'&&req.method==='GET'){
   const range=scheduleRange(url.searchParams);ensureOpenHouse();schedule.ensure();
   const counts=completedCounts(),greenIds=scheduleGreenIds(counts);
-  return send({...scheduleData(db,user,greenIds,range),schedule_range:range,modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
+  return send({...scheduleData(db,user,greenIds,range,true),schedule_range:range,modules:{presence:presence.snapshot(user.id,{manage:isSuperAdmin(user)})},activity_settings:activitySettings.get(),age_warnings:isAdmin(user)?agePolicy.issues():undefined,introduction_pending:pendingIntroductions(user),shift_routines:shiftRoutines(),booking_settings:bookingSettings.get(),user:publicUser(user,counts),branding:branding.get(),door_code:shelterFor(user.id).door,routine:engagements.routine(),checklist:{...checklist.forUser(user.id),checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(user.id).map(r=>r.item_id)},news:news.visible(user.id),bulletin_board:news.board()});
  }
  if(url.pathname==='/api/activity-followup/me'){
   if(req.method==='GET')return send({followup:activityFollowup.own(user.id)});
@@ -338,24 +351,25 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(token);res.setHeader('Set-Cookie',`session=; ${cookieOptions}; Max-Age=0`);return send({ok:true})}
  if(url.pathname==='/api/password'&&req.method==='POST'){const p=await body(req);if(typeof p.current!=='string'||!verify(p.current,user.password))fail('Nuvarande lösenord stämmer inte.');if(typeof p.password!=='string'||p.password.length<10||p.password.length>200)fail('Använd 10–200 tecken.');if(verify(p.password,user.password))fail('Välj ett nytt lösenord som skiljer sig från det nuvarande.');db.prepare('UPDATE users SET password=? WHERE id=?').run(hash(p.password),user.id);setPasswordChange(db,user.id,false);db.prepare('DELETE FROM password_resets WHERE user_id=?').run(user.id);db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(user.id,token);return send({ok:true})}
  if(url.pathname==='/api/bookings/recurring'&&req.method==='POST'){
- const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id; engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count:0});
+ const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id; assertPortalIntroduction(uid,{admin:isAdmin(user)&&uid!==user.id,count:0});
  schedule.ensure();ensureOpenHouse();
- if(p.preview===true){const plan=recurring.preview(uid,p);for(const row of plan.rows.filter(r=>r.status==='new'))agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id));engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count:plan.rows.filter(r=>r.status==='new').length});return send(plan)}
- recurring.book(uid,p,{validate:(count,rows)=>{engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id,count});for(const row of rows)agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id))}});return send(snapshot(user));
+ if(p.preview===true){const plan=recurring.preview(uid,p);for(const row of plan.rows.filter(r=>r.status==='new'))agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id));assertPortalIntroduction(uid,{admin:isAdmin(user)&&uid!==user.id,count:plan.rows.filter(r=>r.status==='new').length});return send(plan)}
+ recurring.book(uid,p,{validate:(count,rows)=>{assertPortalIntroduction(uid,{admin:isAdmin(user)&&uid!==user.id,count});for(const row of rows)agePolicy.assertBook(uid,db.prepare('SELECT * FROM slots WHERE id=?').get(row.slot_id))}});return send(snapshot(user));
  }
  if(url.pathname==='/api/bookings'&&req.method==='POST'){
 
- const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id});
+ const p=await body(req),uid=isAdmin(user)&&p.userId?Number(p.userId):user.id;assertPortalIntroduction(uid,{admin:isAdmin(user)&&uid!==user.id});
  db.exec('BEGIN IMMEDIATE');try{
- engagements.assertBook(uid,{admin:isAdmin(user)&&uid!==user.id});
+ assertPortalIntroduction(uid,{admin:isAdmin(user)&&uid!==user.id});
  const slot=db.prepare('SELECT * FROM slots WHERE id=?').get(Number(p.slotId));if(!slot)fail('Passet finns inte.',404);
  if(slot.cancelled)fail(slot.kind==='event'?'Händelsen är inställd.':'Passet är inställt.',409);
  if(new Date(slot.date+'T'+slot.start+':00')<=new Date())fail('Passet har redan börjat.');
  if(!db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(uid))fail('Volontären är inte aktiv.');
  if(db.prepare('SELECT id FROM bookings WHERE user_id=? AND slot_id=?').get(uid,slot.id))fail('Passet är redan bokat.',409);
- agePolicy.assertBook(uid,slot);
+ agePolicy.assertBook(uid,slot);assertSharedOverlap(uid,slot,p.confirmOverlap===true);
+ const bookedCount=db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n;assertEventCapacity(slot,bookedCount);
  const recommendedLimit=bookingSettings.get().recommended_limit;
- if(db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(slot.id).n>=recommendedLimit&&p.confirmOverLimit!==true)fail('Det är redan minst '+recommendedLimit+' anmälda. Vill du boka ändå?',409,'RECOMMENDED_LIMIT');
+ if(slot.kind!=='event'&&bookedCount>=recommendedLimit&&p.confirmOverLimit!==true)fail('Det är redan minst '+recommendedLimit+' anmälda. Vill du boka ändå?',409,'RECOMMENDED_LIMIT');
  const overlaps=db.prepare('SELECT s.title,s.start,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE s.cancelled=0 AND b.user_id=? AND s.date=? AND s.start<? AND s.end>?').all(uid,slot.date,slot.end,slot.start);
  if(overlaps.length&&p.confirmOverlap!==true)fail('Bokningen överlappar '+overlaps.map(s=>s.title+' '+s.start+'–'+s.end).join(', ')+' den '+slot.date+'. Vill du boka ändå?',409,'OVERLAPPING_BOOKING');
  db.prepare('INSERT INTO bookings(user_id,slot_id) VALUES(?,?)').run(uid,slot.id);db.exec('COMMIT');
@@ -417,17 +431,18 @@ const server=http.createServer(async(req,res)=>{
  }
  if(url.pathname==='/api/branding'&&req.method==='PUT'){branding.save(await body(req,400000));return send(snapshot(user))}
  if(url.pathname==='/api/shift-routines'&&req.method==='PUT'){
-  const p=await body(req);if(!p||Object.keys(p).some(k=>!['revision','daily','weekly','mode','start','end'].includes(k))||!Number.isInteger(p.revision)||!['permanent','temporary','remove'].includes(p.mode||'permanent'))fail('Välj permanent eller tillfällig ändring och öppna redigeraren igen vid behov.');
+  const p=await body(req);if(!p||Object.keys(p).some(k=>!['revision','daily','weekly','mode','start','end','types'].includes(k))||!Number.isInteger(p.revision)||!['permanent','temporary','remove'].includes(p.mode||'permanent'))fail('Välj permanent eller tillfällig ändring och öppna redigeraren igen vid behov.');
   const mode=p.mode||'permanent';let result;
   if(mode==='remove')result=db.prepare('UPDATE shift_routines SET temporary_json=NULL,revision=revision+1 WHERE id=1 AND revision=?').run(p.revision);
   else{
    if(typeof p.daily!=='string'||!p.daily.trim()||p.daily.length>2000||!Array.isArray(p.weekly)||p.weekly.length!==7||p.weekly.some(text=>typeof text!=='string'||!text.trim()||text.length>2000))fail('Ange gemensamma rutiner och en text för varje veckodag, högst 2000 tecken per text.');
    const daily=p.daily.trim(),weekly=p.weekly.map(text=>text.trim());
+   const types=p.types??null;if(types!==null&&(!types||typeof types!=='object'||Array.isArray(types)||Object.keys(types).length!==3||['morning','afternoon','evening'].some(key=>typeof types[key]!=='string'||!types[key].trim()||types[key].length>2000)))fail('Ange en rutin för morgon, eftermiddag och kväll, högst 2000 tecken vardera.');
    if(mode==='temporary'){
     const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&value>='2000-01-01'&&value<='2100-12-31'&&Number.isFinite(Date.parse(value+'T12:00:00Z'))&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
     if(!validDate(p.start)||!validDate(p.end)||p.start>p.end)fail('Ange ett giltigt datumintervall för den tillfälliga ändringen.');
-    result=db.prepare('UPDATE shift_routines SET temporary_json=?,revision=revision+1 WHERE id=1 AND revision=?').run(JSON.stringify({start:p.start,end:p.end,daily,weekly}),p.revision);
-   }else result=db.prepare('UPDATE shift_routines SET daily=?,weekly_json=?,revision=revision+1 WHERE id=1 AND revision=?').run(daily,JSON.stringify(weekly),p.revision);
+    result=db.prepare('UPDATE shift_routines SET temporary_json=?,revision=revision+1 WHERE id=1 AND revision=?').run(JSON.stringify({start:p.start,end:p.end,daily,weekly,types}),p.revision);
+   }else result=db.prepare('UPDATE shift_routines SET daily=?,weekly_json=?,types_json=?,revision=revision+1 WHERE id=1 AND revision=?').run(daily,JSON.stringify(weekly),types?JSON.stringify(types):null,p.revision);
   }
   if(!result.changes)fail('Passrutinerna har ändrats av någon annan. Öppna redigeraren igen.',409);return send(snapshot(user));
  }
@@ -500,7 +515,7 @@ const server=http.createServer(async(req,res)=>{
   if(hasActive&&(id===user.id||![true,false,0,1].includes(p.active)))fail('Ogiltig aktivering eller försök att ändra eget konto.');
   if(hasGreen&&(target.role!=='volunteer'||typeof p.green!=='boolean'))fail('Grönmarkering gäller endast volontärer.');
   if(hasGreen&&!hasActive&&!hasRole&&url.searchParams.get('response')==='compact'){
-   const completed=completedCounts(id).get(id)||0,checklist=checklistComplete(id);
+   const completed=completedCounts(id).green.get(id)||0,checklist=checklistComplete(id);
    const green=isGreen({...target,green_manual:Number(p.green)},completed,checklist);
    const affected=[];
    db.prepare('UPDATE users SET green_manual=? WHERE id=?').run(Number(p.green),id);
@@ -527,7 +542,7 @@ const server=http.createServer(async(req,res)=>{
   const p=await body(req);validateSlot(p);const kind=p.kind||'regular';if(!['regular','event'].includes(kind))fail('Öppet hus skapas automatiskt första söndagen i månaden.');
   if(kind==='event'&&new Date(p.date+'T'+p.start)<=new Date())fail('Välj en framtida tid för händelsen.');
   const rule=kind==='event'?{title:p.title.trim(),note:String(p.note||''),cancelled:0}:sundayRules(p.date,p.start,p.end,p.title.trim(),String(p.note||''));if(rule.cancelled)fail('Passet 16–18 är inställt första söndagen i månaden på grund av öppet hus.');
-  db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info) VALUES(?,?,?,?,?,?,?,?,?)').run(p.date,rule.start||p.start,rule.end||p.end,rule.title,0,rule.note,0,kind,(p.extra_info||'').trim());return send(snapshot(user));
+  const staffing=kind==='event'?eventStaffing(p):{required:2,capacity:0};db.prepare('INSERT INTO slots(date,start,end,title,capacity,note,cancelled,kind,extra_info,event_required) VALUES(?,?,?,?,?,?,?,?,?,?)').run(p.date,rule.start||p.start,rule.end||p.end,rule.title,staffing.capacity,rule.note,0,kind,(p.extra_info||'').trim(),staffing.required);return send(snapshot(user));
  }
  if(/^\/api\/slots\/\d+$/.test(url.pathname)&&['PATCH','DELETE'].includes(req.method)){
   const id=Number(url.pathname.split('/').pop()),p=req.method==='DELETE'?{cancelled:true}:await body(req);
@@ -543,6 +558,7 @@ const server=http.createServer(async(req,res)=>{
     if(rule.cancelled)fail('Passet 16–18 är inställt första söndagen i månaden på grund av öppet hus.');
     const conflicts=db.prepare('SELECT DISTINCT u.name,s.title,s.start,s.end FROM bookings current JOIN users u ON u.id=current.user_id JOIN bookings other ON other.user_id=current.user_id JOIN slots s ON s.id=other.slot_id WHERE current.slot_id=? AND other.slot_id<>? AND s.cancelled=0 AND s.date=? AND s.start<? AND s.end>?').all(id,id,p.date,p.end,p.start);
     if(conflicts.length&&p.confirmOverlap!==true)fail('Den nya tiden överlappar andra bokningar:\n'+conflicts.map(c=>c.name+': '+c.title+' '+c.start+'–'+c.end).join('\n')+'\nVill du spara ändringen ändå?',409,'OVERLAPPING_BOOKING');
+    if(slot.kind==='event'){const staffing=eventStaffing(p,slot),booked=db.prepare('SELECT COUNT(*) n FROM bookings WHERE slot_id=?').get(id).n;if(staffing.capacity>0&&staffing.capacity<booked)fail('Deltagartaket får inte vara lägre än antalet befintliga bokningar.');db.prepare('UPDATE slots SET event_required=?,capacity=? WHERE id=?').run(staffing.required,staffing.capacity,id)}
     db.prepare('UPDATE slots SET date=?,start=?,end=?,title=?,note=?,extra_info=?,cancelled=0 WHERE id=?').run(p.date,p.start,p.end,p.title.trim(),p.note||'',(p.extra_info??slot.extra_info).trim(),id);
     if(slot.cancelled||p.date!==slot.date||p.start!==slot.start||p.end!==slot.end)db.prepare('DELETE FROM reminder_delivery WHERE booking_id IN (SELECT id FROM bookings WHERE slot_id=?)').run(id);
    }

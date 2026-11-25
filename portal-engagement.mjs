@@ -2,6 +2,7 @@ import {createEngagement} from './engagement.mjs';
 // The registry joins only proven account links. Matching e-mail addresses never establish identity.
 export function createPortalEngagement(registry,{workers,houses,now=()=>Date.now()}){
  registry.exec('PRAGMA secure_delete=ON;CREATE TABLE IF NOT EXISTS volunteer_credits(person TEXT PRIMARY KEY,completed INTEGER NOT NULL DEFAULT 0)');
+ if(!registry.prepare('PRAGMA table_info(volunteer_credits)').all().some(c=>c.name==='green_completed'))registry.exec('ALTER TABLE volunteer_credits ADD COLUMN green_completed INTEGER');
  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
  const service=home=>createEngagement(workers.get(home).db,{now});
  function cluster(home,id){const found=new Map([[home+':'+id,{home,id}]]);let changed=true;while(changed){changed=false;for(const x of [...found.values()]){const person=registry.prepare('SELECT person FROM volunteer_lineage WHERE home=? AND user_id=?').get(x.home,x.id)?.person;const links=[...registry.prepare('SELECT target home,local_id id FROM shadows WHERE source=? AND user_id=?').all(x.home,x.id),...registry.prepare('SELECT source home,user_id id FROM shadows WHERE target=? AND local_id=?').all(x.home,x.id),...(person?registry.prepare('SELECT home,user_id id FROM volunteer_lineage WHERE person=?').all(person):[])];for(const y of links)if(!found.has(y.home+':'+y.id)){found.set(y.home+':'+y.id,y);changed=true}}}return [...found.values()].filter(x=>workers.has(x.home))}
@@ -39,12 +40,12 @@ export function createPortalEngagement(registry,{workers,houses,now=()=>Date.now
    const keepIdentity=new Set(anchor&&others.length?[row.user_id]:[]);
    // Retain only anonymous totals when a continuing volunteer still needs their experience count.
    const person=registry.prepare('SELECT person FROM volunteer_lineage WHERE home=? AND user_id=?').get(h.id,row.user_id)?.person;
-   const completed=db.prepare('SELECT s.date,s.end FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(row.user_id).filter(s=>new Date(s.date+'T'+s.end)<=now()).length;
+   const completedRows=db.prepare('SELECT s.date,s.end,s.kind FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND s.cancelled=0').all(row.user_id).filter(s=>new Date(s.date+'T'+s.end)<=now()),completed=completedRows.length,greenCompleted=completedRows.filter(s=>s.kind!=='event').length;
    db.prepare('ATTACH DATABASE ? AS lifecycle_registry').run(registry.location());
    try{db.exec('PRAGMA secure_delete=ON;PRAGMA lifecycle_registry.secure_delete=ON;BEGIN IMMEDIATE');try{
     const fresh=e.get(row.user_id);if(fresh.status!=='ended'||fresh.purge_after>now()||fresh.held){db.exec('COMMIT');continue}
     e.erase([row.user_id],{keepIdentity});
-    if(person&&others.length)db.prepare('INSERT INTO lifecycle_registry.volunteer_credits VALUES(?,?) ON CONFLICT(person) DO UPDATE SET completed=completed+excluded.completed').run(person,completed);
+    if(person&&others.length)db.prepare('INSERT INTO lifecycle_registry.volunteer_credits(person,completed,green_completed) VALUES(?,?,?) ON CONFLICT(person) DO UPDATE SET green_completed=COALESCE(green_completed,completed)+excluded.green_completed,completed=completed+excluded.completed').run(person,completed,greenCompleted);
     db.prepare('DELETE FROM lifecycle_registry.shadow_profile_sync WHERE (source=? AND user_id=?) OR (target=? AND user_id IN (SELECT user_id FROM lifecycle_registry.shadows WHERE target=? AND local_id=?))').run(h.id,row.user_id,h.id,h.id,row.user_id);
     db.exec('COMMIT');
    }catch(error){db.exec('ROLLBACK');throw error}}finally{db.exec('DETACH DATABASE lifecycle_registry')}

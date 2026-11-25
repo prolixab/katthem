@@ -41,6 +41,15 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const day=new Date();day.setDate(day.getDate()+10);const date=day.toISOString().slice(0,10);
  let r=await call('slots','POST',{date,start:'12:00',end:'13:00',title:'Testpass',capacity:1},ac);assert.equal(r.status,200);const slot=(await r.json()).slots.find(s=>s.title==='Testpass');
  r=await call('users','POST',{name:'Testvolontär',email:'test@example.se',password:'password12345'},ac);assert.equal(r.status,200);const uid=(await r.json()).users.find(u=>u.email==='test@example.se').id;
+ { // Event staffing survives edits; the hard cap also holds for simultaneous admin bookings.
+ const eventPayload={kind:'event',date,start:'21:00',end:'22:00',title:'Gummifabriken test',note:'Samling vid entrén',event_required:1,capacity:1};
+ assert.equal((await call('slots','POST',{...eventPayload,event_required:8,capacity:7},ac)).status,400);
+ const createdEvent=await call('slots','POST',eventPayload,ac);assert.equal(createdEvent.status,200);const eventSlot=(await createdEvent.json()).slots.find(s=>s.title===eventPayload.title);assert.equal(eventSlot.minimum_staff,1);assert.equal(eventSlot.capacity,1);assert.equal(eventSlot.note,eventPayload.note);
+ const eventBookings=await Promise.all([1,uid].map(userId=>call('bookings','POST',{slotId:eventSlot.id,userId,confirmOverlap:true,confirmOverLimit:true},ac)));assert.deepEqual(eventBookings.map(r=>r.status).sort(),[200,409]);assert.equal((await eventBookings.find(r=>r.status===409).json()).code,'EVENT_FULL');
+ assert.equal((await call('slots/'+eventSlot.id,'PATCH',{...eventPayload,event_required:8,capacity:''},ac)).status,200);
+ const editedEvent=(await(await call('state','GET',null,ac)).json()).slots.find(s=>s.id===eventSlot.id);assert.equal(editedEvent.minimum_staff,8);assert.equal(editedEvent.capacity,0);assert.equal(editedEvent.booked,1);
+ await call('slots/'+eventSlot.id,'DELETE',null,ac);
+ }
  assert.equal((await call('users','POST',{name:'Ny admin',email:'newadmin@example.se',password:'Password12345',role:'admin'},ac)).status,200);
  const newAdmin=await call('login','POST',{email:'newadmin@example.se',password:'Password12345'});assert.equal(newAdmin.status,200);const newAdminCookie=newAdmin.headers.get('set-cookie').split(';')[0];assert.equal((await newAdmin.json()).user.role,'admin');assert.equal((await call('password','POST',{current:'Password12345',password:'OwnAdminPassword12345'},newAdminCookie)).status,200);
  // Checklist review is read-only, private to admins, and follows saved volunteer progress.
@@ -84,6 +93,12 @@ test('Lokal bokning: inloggning, behörighet, samtidighet och beständighet',asy
  const permanentSave=await call('shift-routines','PUT',{revision:temporaryState.revision,daily:baseRoutines.daily,weekly:baseRoutines.weekly,mode:'permanent'},ac);assert.equal(permanentSave.status,200);const permanentState=(await permanentSave.json()).shift_routines;assert.equal(permanentState.temporary.start,'2030-01-02');
  assert.equal((await call('shift-routines','PUT',{revision:permanentState.revision,mode:'remove'},vc)).status,403);
  const removed=await call('shift-routines','PUT',{revision:permanentState.revision,mode:'remove'},ac);assert.equal(removed.status,200);assert.equal((await removed.json()).shift_routines.temporary,null);
+ const typeBase=(await(await call('state','GET',null,ac)).json()).shift_routines,types={morning:'Morgon: mat och vatten.',afternoon:'Eftermiddag: städning.',evening:'Kväll: kontroll och låsning.'};
+ const typedSave=await call('shift-routines','PUT',{revision:typeBase.revision,daily:typeBase.daily,weekly:typeBase.weekly,types},ac);assert.equal(typedSave.status,200);const typed=(await typedSave.json()).shift_routines;assert.deepEqual(typed.types,types);assert.equal(typed.temporary,null);
+ assert.equal((await call('shift-routines','PUT',{revision:typed.revision,daily:typed.daily,weekly:typed.weekly,types:{morning:'Endast en text'}},ac)).status,400);
+ const typedTemporary=await call('shift-routines','PUT',{revision:typed.revision,daily:'Tillfälligt',weekly:typed.weekly,mode:'temporary',start:'2030-01-02',end:'2030-01-04',types:{...types,evening:'Tillfällig kväll'}},ac);assert.equal(typedTemporary.status,200);const typedTemp=(await typedTemporary.json()).shift_routines;assert.equal(typedTemp.temporary.types.evening,'Tillfällig kväll');assert.equal(typedTemp.types.evening,types.evening);
+ const typeReset=await call('shift-routines','PUT',{revision:typedTemp.revision,mode:'remove'},ac);const typeResetData=(await typeReset.json()).shift_routines;assert.equal((await call('shift-routines','PUT',{revision:typeResetData.revision,daily:typeBase.daily,weekly:typeBase.weekly,types:null},ac)).status,200);
+
  // Checklist template access and stale-edit protection apply equally to admin and SA.
  assert.equal((await call('checklist/template','GET',null,vc)).status,403);
  const templateResponse=await call('checklist/template','GET',null,newAdminCookie);assert.equal(templateResponse.status,200);const template=await templateResponse.json();

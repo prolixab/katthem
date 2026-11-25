@@ -1,3 +1,4 @@
+import {eventStaffing,assertEventCapacity} from './event-staffing.mjs';
 import {createReminders} from './reminders.mjs';
 import {createBookingSettings} from './booking-settings.mjs';
 import {runInNewContext} from 'node:vm';
@@ -367,4 +368,13 @@ test('Manualsökning matchar rubrik och text, hanterar åäö, visar tomt result
  runInNewContext(`filterManual('LOSENORD')`,context);assert.deepEqual(chapters.map(c=>c.hidden),[true,false]);assert.equal(chapters[1].open,true);
  runInNewContext(`filterManual('saknas')`,context);assert.ok(chapters.every(c=>c.hidden));assert.equal(empty.hidden,false);
  runInNewContext(`filterManual('')`,context);assert.ok(chapters.every(c=>!c.hidden));assert.deepEqual(chapters.map(c=>c.open),[false,true]);assert.equal(clear.disabled,true);assert.equal(empty.hidden,true);
+});
+
+test('Händelsebemanning: behov, valfritt tak, validering och fullbokning',()=>{
+ assert.deepEqual(eventStaffing({event_required:'8',capacity:''}),{required:8,capacity:0});
+ assert.deepEqual(eventStaffing({}, {event_required:8,capacity:10}),{required:8,capacity:10});
+ for(const input of [{event_required:0},{event_required:1.5},{event_required:501},{event_required:8,capacity:7},{event_required:8,capacity:501}])assert.throws(()=>eventStaffing(input),e=>e.status===400);
+ assert.throws(()=>assertEventCapacity({kind:'event',capacity:8},8),e=>e.code==='EVENT_FULL');
+ assert.doesNotThrow(()=>assertEventCapacity({kind:'event',capacity:0},100));
+ assert.doesNotThrow(()=>assertEventCapacity({kind:'regular',capacity:2},8));
 });
