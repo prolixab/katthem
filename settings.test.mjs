@@ -18,13 +18,13 @@ test('Logotypvisning: vita/transparenta marginaler jämnas ut utan att klippa mo
 
 test('Menygrupper: rollstyrning och konto längst ned utan dubbla menyval',()=>{
  const app=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),source=app.slice(app.indexOf('function menuIcon('),app.indexOf('function administrationPage('));
- const context=vm.createContext({state:{user:{name:'Testvolontär',role:'volunteer'},members_enabled:true},view:'home',isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s),roleLabel:s=>s});vm.runInContext(source,context);
- for(const role of ['volunteer','admin','superadmin']){
+ const context=vm.createContext({state:{user:{name:'Testvolontär',role:'volunteer'},members_enabled:true},view:'home',canManageBookings:u=>['coordinator','admin','superadmin'].includes(u.role),isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s),roleLabel:s=>s});vm.runInContext(source,context);
+ for(const role of ['volunteer','coordinator','admin','superadmin']){
   context.state.user.role=role;
   const groups=JSON.parse(JSON.stringify(vm.runInContext('navigationGroups()',context))),html=vm.runInContext('navigationMarkup()',context),keys=groups.flatMap(g=>g.items.map(item=>item[0]));
   assert.deepEqual(keys.slice(0,3),['home','schedule','mine']);assert.equal(new Set(keys).size,keys.length);assert.ok(!keys.includes('account'));
-  assert.equal(groups.some(g=>g.id==='administration'),role!=='volunteer');
-  assert.equal(groups.find(g=>g.id==='information').items.some(item=>item[0]==='members'),role==='volunteer');
+  assert.equal(groups.some(g=>g.id==='administration'),role!=='volunteer');assert.equal(keys.includes('admin'),['admin','superadmin'].includes(role));assert.equal(keys.includes('staffing'),role!=='volunteer');
+  assert.equal(groups.find(g=>g.id==='information').items.some(item=>item[0]==='members'),['volunteer','coordinator'].includes(role));
   assert.ok(html.indexOf('data-view="account"')>html.indexOf('class="side-bottom"'));assert.equal((html.match(/data-view="account"/g)||[]).length,1);assert.match(html,/data-action="logout"/);assert.match(html,/aria-current="page"/);assert.match(html,/class="menu-icon"/);
  }
 });

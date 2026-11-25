@@ -5,7 +5,7 @@ export function monthAgo(now=new Date()){
  const lastDay=new Date(date.getFullYear(),date.getMonth()+1,0).getDate();date.setDate(Math.min(day,lastDay));return date.getTime();
 }
 export function isInactive(user,lastCompleted,now=new Date(),days=30){
- return user.role==='volunteer'&&Boolean(user.active)&&(lastCompleted??user.created_at)<=new Date(now).getTime()-days*86400000;
+ return ['volunteer','coordinator'].includes(user.role)&&Boolean(user.active)&&(lastCompleted??user.created_at)<=new Date(now).getTime()-days*86400000;
 }
 
 export function createActivitySettings(db){
@@ -69,7 +69,7 @@ export function createActivityFollowup(db,{mailProvider,lastCompleted,shelterNam
  function confirm(id,sentAt){
   const result=db.prepare(`UPDATE activity_followup_delivery SET confirmed_at=COALESCE(confirmed_at,?)
    WHERE user_id=? AND sent_at=? AND EXISTS(SELECT 1 FROM users u JOIN engagements e ON e.user_id=u.id
-   WHERE u.id=? AND u.active=1 AND u.role='volunteer' AND e.status='active')`).run(now(),id,sentAt??null,id);
+   WHERE u.id=? AND u.active=1 AND u.role IN ('volunteer','coordinator') AND e.status='active')`).run(now(),id,sentAt??null,id);
   if(!result.changes)fail('Uppföljningen har ändrats. Ladda om Mitt konto.',409);
   return own(id);
  }
@@ -82,7 +82,7 @@ export function createActivityFollowup(db,{mailProvider,lastCompleted,shelterNam
   for(const {user,anchor} of preview().recipients){
    if(attempted>=10||!settings().enabled||!mailProvider.status().configured)break;
    const current=db.prepare('SELECT u.name,u.email,u.active,u.role,e.status FROM users u JOIN engagements e ON e.user_id=u.id WHERE u.id=?').get(user.id);
-   if(!current?.active||current.role!=='volunteer'||current.status!=='active'||current.email!==user.email)continue;
+   if(!current?.active||!['volunteer','coordinator'].includes(current.role)||current.status!=='active'||current.email!==user.email)continue;
    const time=now();
    db.prepare(`INSERT INTO activity_followup_delivery(user_id,anchor,delivery_key) VALUES(?,?,?)
     ON CONFLICT(user_id) DO UPDATE SET anchor=excluded.anchor,delivery_key=excluded.delivery_key,attempts=0,next_attempt=0,sent_at=NULL,confirmed_at=NULL
