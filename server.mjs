@@ -404,6 +404,10 @@ const server=http.createServer(async(req,res)=>{
   const template=checklist.forUser(id),ids=new Set(template.groups.flatMap(g=>g.items.map(i=>i.id)));
   return send({user_id:id,name:target.name,...template,checked_items:db.prepare('SELECT item_id FROM checklist_progress WHERE user_id=?').all(id).map(r=>r.item_id).filter(id=>ids.has(id))});
  }
+ if(/^\/api\/engagements\/\d+\/pending-bookings$/.test(url.pathname)&&req.method==='GET'){
+  const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);
+  return send({bookings:engagements.pending([id]),shelter_name:currentShelterName()});
+ }
  if(url.pathname==='/api/activity-settings'&&req.method==='PUT'){activitySettings.save(await body(req));return send(snapshot(user))}
  if(url.pathname==='/api/booking-settings'&&req.method==='PUT'){bookingSettings.save(await body(req));return send(snapshot(user))}
  if(/^\/api\/members\/\d+\/phone$/.test(url.pathname)&&req.method==='PATCH'){
@@ -435,7 +439,11 @@ const server=http.createServer(async(req,res)=>{
   if(url.searchParams.get('response')==='compact')return send({id,engagement,introduction_pending:pendingIntroduction(target,engagement)});
   return send(snapshot(user));
  }
- if(/^\/api\/engagements\/\d+(?:\/(hold|introduction))?$/.test(url.pathname)&&req.method==='PATCH'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);const p=await body(req),action=url.pathname.split('/')[4];if(action==='hold')engagements.hold(id,p);else if(action==='introduction')engagements.approve(id,p);else{db.exec('BEGIN IMMEDIATE');try{engagements.setStatus(id,p);db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}}return send(snapshot(user))}
+ if(/^\/api\/engagements\/\d+(?:\/(hold|introduction))?$/.test(url.pathname)&&req.method==='PATCH'){const id=Number(url.pathname.split('/')[3]),target=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!target||!canManageAccount(user,target))fail('Du saknar behörighet att ändra detta engagemang.',403);const p=await body(req),action=url.pathname.split('/')[4];let cancelledBookings=0;if(action==='hold')engagements.hold(id,p);else if(action==='introduction')engagements.approve(id,p);else{db.exec('BEGIN IMMEDIATE');try{
+  if(p.cancel_bookings!==undefined&&typeof p.cancel_bookings!=='boolean')fail('Bekräfta automatisk avbokning med kryssrutan.');
+  if(['paused','inactive','ended'].includes(p.status)&&p.cancel_bookings===true){const pending=engagements.pending([id]);for(const booking of pending)agePolicy.assertRemove(id,db.prepare('SELECT * FROM slots WHERE id=?').get(booking.slot_id));for(const booking of pending)db.prepare('DELETE FROM bookings WHERE id=?').run(booking.booking_id);cancelledBookings=pending.length}
+  engagements.setStatus(id,p);db.exec('COMMIT')
+ }catch(error){db.exec('ROLLBACK');throw error}}return send({...snapshot(user),...(!action?{status_change:{cancelled_bookings:cancelledBookings}}:{})})}
  if((url.pathname==='/api/news'&&req.method==='POST')||(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='PUT')){const p=await body(req);news.save(req.method==='POST'?null:Number(url.pathname.split('/').pop()),p);return send(snapshot(user))}
  if(/^\/api\/news\/\d+$/.test(url.pathname)&&req.method==='DELETE'){const p=await body(req);news.remove(Number(url.pathname.split('/').pop()),p.revision);return send(snapshot(user))}
  if(url.pathname==='/api/door-code'&&req.method==='PUT'){

@@ -358,3 +358,13 @@ test('Profilens pausåtgärd visas för SA även på admin och styrelse men inte
  context.state.user.role='admin';html=runInNewContext(fn+';profileEngagementPanel(target)',context);assert.doesNotMatch(html,/data-profile-engagement/);assert.match(html,/Endast superadmin/);
  target.role='volunteer';assert.match(runInNewContext(fn+';profileEngagementPanel(target)',context),/data-profile-engagement/);target.transfer_retired=true;assert.doesNotMatch(runInNewContext(fn+';profileEngagementPanel(target)',context),/data-profile-engagement/);
 });
+
+
+test('Manualsökning matchar rubrik och text, hanterar åäö, visar tomt resultat och återställer öppna avsnitt',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),start=source.indexOf('function filterManual('),fn=source.slice(start,source.indexOf('\nfunction bindManualSearch',start));
+ const chapters=[{textContent:'Paus och engagemang Styrelsens status',dataset:{},open:false},{textContent:'Lösenord Återställ via e-post',dataset:{},open:true}],status={},empty={},clear={},manual={querySelectorAll:()=>chapters,querySelector:s=>s==='#manual-search-status'?status:s==='#manual-search-empty'?empty:clear};
+ const context={app:{querySelector:()=>manual},manualSearchQuery:''};runInNewContext(fn+`;filterManual('paus styrelse')`,context);assert.deepEqual(chapters.map(c=>c.hidden),[false,true]);assert.equal(chapters[0].open,true);assert.match(status.textContent,/1 av 2/);
+ runInNewContext(`filterManual('LOSENORD')`,context);assert.deepEqual(chapters.map(c=>c.hidden),[true,false]);assert.equal(chapters[1].open,true);
+ runInNewContext(`filterManual('saknas')`,context);assert.ok(chapters.every(c=>c.hidden));assert.equal(empty.hidden,false);
+ runInNewContext(`filterManual('')`,context);assert.ok(chapters.every(c=>!c.hidden));assert.deepEqual(chapters.map(c=>c.open),[false,true]);assert.equal(clear.disabled,true);assert.equal(empty.hidden,true);
+});

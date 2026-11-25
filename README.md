@@ -715,3 +715,11 @@ Volontär- och adminmanualerna har ett eget avsnitt Lägg till din Messenger-pro
 ## Pausade styrelsemedlemmar och kontaktlistor
 
 Kontaktlistorna under Kontaktpersoner och Praktisk information använder samma urval: aktiv/stödjande profil, aktivt konto om ett sådant finns och aktivt engagemang. Pausade, inaktiva och avslutade personer visas inte, även om styrelseuppdrag eller administratörsroll finns kvar. Admin och SA behåller åtkomst till den privata profilen för hantering och återaktivering. Döljningen gäller valt katthem och ändrar inte rollen eller uppdraget.
+
+## Bekräftad avbokning vid administrativ statusändring
+
+När admin eller SA ändrar en persons status till pausad, inaktiv eller avslutad visar formuläret en hämtad lista över kommande/pågående bokningar i valt katthem. En obligatorisk ruta bekräftar att listan kontrollerats och att dessa bokningar avbokas automatiskt. Servern kräver `cancel_bookings: true` för att ta bort sådana bokningar; annars måste de hanteras separat. Bokningar hämtas på nytt under skrivlåset, åldersregeln kontrolleras för alla berörda pass och avbokning samt statusändring genomförs atomiskt. Stale revision, ogiltig paus eller sista myndiga med minderåriga medför rollback av allt. Avslutade pass, redan inställda pass och andra personers bokningar lämnas kvar. Detta gäller administrativa statusändringar, inte personens egen paus/avslut. Behörigheter mellan admin och SA är oförändrade.
+
+## Sökning i manualen
+
+Sök i manualen filtrerar och öppnar avsnitt som matchar alla angivna ord i rubrik eller brödtext. Sökningen gäller endast avsnitt som redan är tillgängliga för den inloggade rollen. Skiftläge och diakritiska tecken ignoreras. Antal matchande avsnitt och tomt resultat visas. Rensa sökning visar avsnitten igen och återställer deras tidigare öppet/stängt-läge.
