@@ -349,3 +349,12 @@ test('Checklistans sparning skiljer sparfel från uppdateringsfel och ignorerar 
   if(mode==='changed-home')assert.deepEqual(context.state.checklist.checked_items,[]);
  }
 });
+
+
+test('Profilens pausåtgärd visas för SA även på admin och styrelse men inte för vanlig admin',()=>{
+ const source=readFileSync(new URL('./public/app.js',import.meta.url),'utf8'),fn=source.split('\n').find(l=>l.startsWith('function profileEngagementPanel('));
+ const target={id:2,role:'admin',engagement:{status:'paused',review_at:123}},context={state:{user:{id:1,role:'superadmin'}},isAdmin:u=>['admin','superadmin'].includes(u.role),canManageAccount:(a,t)=>a.role==='superadmin'||a.role==='admin'&&t.role==='volunteer',esc:s=>s,engagementLabel:s=>s==='paused'?'Pausad':s,engagementDate:()=> '1 december',target};
+ let html=runInNewContext(fn+';profileEngagementPanel(target)',context);assert.match(html,/data-profile-engagement="2"/);assert.match(html,/Ändra status \/ pausa/);assert.match(html,/Pausad/);assert.match(html,/styrelseuppdrag/);
+ context.state.user.role='admin';html=runInNewContext(fn+';profileEngagementPanel(target)',context);assert.doesNotMatch(html,/data-profile-engagement/);assert.match(html,/Endast superadmin/);
+ target.role='volunteer';assert.match(runInNewContext(fn+';profileEngagementPanel(target)',context),/data-profile-engagement/);target.transfer_retired=true;assert.doesNotMatch(runInNewContext(fn+';profileEngagementPanel(target)',context),/data-profile-engagement/);
+});
