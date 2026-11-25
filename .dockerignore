@@ -55,3 +55,7 @@
 !age-policy.mjs
 
 !shared-settings.mjs
+
+!event-staffing.mjs
+!portal-events.mjs
+!shared-event-stats.mjs
