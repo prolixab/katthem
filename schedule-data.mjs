@@ -18,7 +18,8 @@ export function scheduleData(db,user,greenIds,range=null,includeUpcomingEvents=f
   if(greenIds.has(b.user_id))greenCounts.set(b.slot_id,(greenCounts.get(b.slot_id)||0)+1);
   if(!cancelled.has(b.slot_id)){if(!namesBySlot.has(b.slot_id))namesBySlot.set(b.slot_id,[]);namesBySlot.get(b.slot_id).push(labels.get(b.user_id).label)}
  }
- const mapped=slots.map(s=>({...s,minimum_staff:s.kind==='event'?(s.event_required??2):2,names:namesBySlot.get(s.id)||[],green_booked:greenCounts.get(s.id)||0}));
+ const suppressed=db.prepare("SELECT 1 FROM sqlite_master WHERE name='suppressed_meetings'").get()?new Set(db.prepare('SELECT slot_id FROM suppressed_meetings').all().map(r=>r.slot_id)):new Set();
+ const mapped=slots.filter(s=>!suppressed.has(s.id)||s.mine||isAdmin(user)&&s.booked>0).map(s=>({...s,minimum_staff:s.kind==='event'?(s.event_required??2):2,names:namesBySlot.get(s.id)||[],green_booked:greenCounts.get(s.id)||0}));
  if(range&&includeUpcomingEvents){const visible=mapped.filter(s=>s.mine||s.date>=range.start&&s.date<=range.end),ids=new Set(visible.map(s=>s.id));return {slots:visible,bookings:canManageBookings(user)?bookings.filter(b=>ids.has(b.slot_id)):bookings,upcoming_events:mapped.filter(s=>s.kind==='event'),upcoming_event_bookings:canManageBookings(user)?bookings.filter(b=>mapped.some(s=>s.id===b.slot_id&&s.kind==='event')):[]};}
  return {slots:mapped,bookings};
 }

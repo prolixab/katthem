@@ -42,3 +42,34 @@ export function upgradeSundayShifts(db,now=new Date()){
   db.prepare('INSERT INTO schedule_migrations(name) VALUES(?)').run(migration);db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error}
 }
+
+// Stored in each shelter database; disabling never deletes bookings or history.
+export function createAutomaticScheduleSettings(db){
+ db.exec('CREATE TABLE IF NOT EXISTS automatic_schedule_settings(id INTEGER PRIMARY KEY CHECK(id=1),social INTEGER NOT NULL DEFAULT 1,meeting INTEGER NOT NULL DEFAULT 1,revision INTEGER NOT NULL DEFAULT 0);INSERT OR IGNORE INTO automatic_schedule_settings(id) VALUES(1);CREATE TABLE IF NOT EXISTS suppressed_meetings(slot_id INTEGER PRIMARY KEY REFERENCES slots(id))');
+ const get=()=>{const r=db.prepare('SELECT * FROM automatic_schedule_settings WHERE id=1').get();return {social:Boolean(r.social),meeting:Boolean(r.meeting),revision:r.revision}};
+ function save(p,{now=new Date(),queue=()=>{}}={}){
+  const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
+  if(!p||Object.keys(p).some(k=>!['social','meeting','revision'].includes(k))||typeof p.social!=='boolean'||typeof p.meeting!=='boolean'||!Number.isInteger(p.revision))fail('Välj vilka automatiska pass som ska användas.');
+  db.exec('BEGIN IMMEDIATE');try{
+   const old=get();if(old.revision!==p.revision)fail('Inställningen har ändrats. Öppna den igen.',409);
+   if(old.social!==p.social){
+    for(const s of db.prepare("SELECT s.* FROM slots s JOIN schedule_origins o ON o.slot_id=s.id AND o.date=s.date AND o.start=s.start WHERE s.kind='regular' AND s.date>=? AND s.start IN ('16:00','18:00')").all(dateKey(now))){
+     if(new Date(s.date+'T'+s.start)<=now||new Date(s.date+'T12:00').getDay()!==0)continue;
+     const regular=s.start==='16:00'?'Eftermiddagspass':'Kvällspass',expected=p.social?regular:'Socialiseringsgruppen';
+     if(s.title!==expected)continue;
+     db.prepare('UPDATE slots SET title=?,note=? WHERE id=?').run(p.social?'Socialiseringsgruppen':regular,p.social?'Ordinarie uppgifter och en stunds socialiseringsträning med katterna. Anmäl dig gärna till passet.':'Mat, städning och en stunds sällskap.',s.id);
+     queue(s,db.prepare('SELECT * FROM slots WHERE id=?').get(s.id));
+    }
+   }
+   if(old.meeting&&!p.meeting){
+    for(const s of db.prepare('SELECT s.* FROM slots s JOIN volunteer_meeting_origins v ON v.slot_id=s.id WHERE s.date>=?').all(dateKey(now))){
+     if(new Date(s.date+'T'+s.start)<=now||s.cancelled)continue;
+     db.prepare('UPDATE slots SET cancelled=1 WHERE id=?').run(s.id);db.prepare('INSERT OR IGNORE INTO suppressed_meetings VALUES(?)').run(s.id);queue(s,db.prepare('SELECT * FROM slots WHERE id=?').get(s.id));
+    }
+   }
+   if(!old.meeting&&p.meeting)db.exec('DELETE FROM suppressed_meetings');
+   db.prepare('UPDATE automatic_schedule_settings SET social=?,meeting=?,revision=revision+1 WHERE id=1').run(Number(p.social),Number(p.meeting));db.exec('COMMIT');return get();
+  }catch(e){db.exec('ROLLBACK');throw e}
+ }
+ return {get,save};
+}

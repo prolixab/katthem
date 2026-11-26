@@ -755,3 +755,8 @@ Förhandsgranskning och slutlig import gör samma behörighets- och radkontroll.
 
 ### Onboardingguider (0.6.062)
 Två PDF-guider finns för introduktion och gemensam genomgång: [Onboarding för volontärer](output/pdf/onboarding-volontarer-0.6.062.pdf) och [Onboarding för volontärer och admin](output/pdf/onboarding-volontarer-och-admin-0.6.062.pdf). De beskriver bokning, profil, rutiner, checklista, grönmarkering och överlämning. Den utökade guiden beskriver även bemanning, samordnare, import per katthem och administrativa ansvarsområden. Funktioner i 0.6.062 behöver vara driftsatta för att synas på den publicerade sidan.
+
+### Automatiska pass per katthem (0.6.063)
+Admin och SA väljer **Administration → Skapa och planera → Automatiska pass för katthemmet**. Socialiseringsgruppen kan stängas av: söndagens 16–18 och 18–20 blir ordinarie eftermiddags- och kvällspass, med bokningar och tider kvar. Endast framtida ordinarie, automatiska söndagspass med förväntat namn ändras. Historik, påbörjade pass och egna namnändringar bevaras.
+
+Automatisk volontärsträff kan stängas av separat. Framtida automatiska träffar (även flyttade) ställs in och nygenerering stoppas. Bokningar bevaras och ordinarie ändringsnotifieringar köas. Inställda bokade tillfällen är synliga för berörda och admin; obokade avstängda träffar döljs i schemat. Vid återaktivering återupplivas inte redan inställda träffar: boka om dem separat vid behov. Öppet hus, manuella händelser och andra katthem påverkas inte. Inställningarna lagras i varje hems SQLite och har revisionsskydd.
