@@ -747,3 +747,11 @@ Admin och SA kan utse och ta bort samordnare via volontärprofilens rollknapp i 
 
 ### Kontroll efter publicering
 Efter push kontrolleras den verkliga driftsidans hälsokontroll, versionsnummer, nödvändiga resurser och API-svar. Pågående driftsättning följs med begränsade återförsök. Observerad otillgänglighet rapporteras direkt; kvarstående fel eller en overifierad version ska framgå tydligt. Dessa kontroller är grundläggande driftkontroller och ersätter inte tester av alla funktioner.
+
+### CSV till rätt katthem (0.6.062)
+Importen accepterar kolumnen `katthem` (även `shelter` eller `ort`). Namn eller id matchas mot registrerade hem; Jönköping tolkas som Huskvarna. Admin kan bara importera till valt katthem och rader för andra kända hem hoppas över. Global superadmin kan välja att fördela en gemensam CSV mellan flera hem. Saknat eller okänt katthem kräver ett uttryckligt val eller Hoppa över; import kan inte starta med olösta rader.
+
+Förhandsgranskning och slutlig import gör samma behörighets- och radkontroll. Varje hem sparas atomiskt i sin egen databas, men hela flerhemsimporten är inte en gemensam transaktion. Delresultat och fel visas per hem; återförsök hoppar över befintliga konton utan nya inbjudningar. Samma nya e-postadress flera gånger använder första importbara raden. Inga konton kopplas mellan hem automatiskt. Manuell grönmarkering kräver fortsatt genomförd checklista. Importens förhandsvisning returnerar aldrig lösenord.
+
+### Onboardingguider (0.6.062)
+Två PDF-guider finns för introduktion och gemensam genomgång: [Onboarding för volontärer](output/pdf/onboarding-volontarer-0.6.062.pdf) och [Onboarding för volontärer och admin](output/pdf/onboarding-volontarer-och-admin-0.6.062.pdf). De beskriver bokning, profil, rutiner, checklista, grönmarkering och överlämning. Den utökade guiden beskriver även bemanning, samordnare, import per katthem och administrativa ansvarsområden. Funktioner i 0.6.062 behöver vara driftsatta för att synas på den publicerade sidan.

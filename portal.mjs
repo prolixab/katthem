@@ -1,3 +1,4 @@
+import {previewShelterImport,executeShelterImport} from './shelter-import.mjs';
 import {createPortalEvents} from './portal-events.mjs';
 import {canonicalShelterName} from './shelter.mjs';
 import {createScheduleDisplay,displaySchedule,displayNames,createPresenceTickets,createPresenceGrants} from './display.mjs';
@@ -235,6 +236,13 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }
    if(url.pathname==='/api/branding'&&req.method==='GET'){target=requested||p?.selected||primary;if(!house(target))fail('Katthemmet finns inte.',404);return send(createBranding((await worker(target)).db).get())}
    if(url.pathname==='/api/portal'&&req.method==='GET')return send(publicList());
+   if(['/api/portal/import-preview','/api/portal/import'].includes(url.pathname)&&req.method==='POST'){
+    if(!p)fail('Logga in för att fortsätta.',401);if(!house(target)||!['admin','superadmin'].includes(access(p,target)))fail('Du behöver adminbehörighet i det valda katthemmet.',403);
+    const fields=json(payload),context={homes:houses(),selected:target,global:p.global};
+    const request=async(home,action,data)=>{if(!['admin','superadmin'].includes(access(p,home)))fail('Du saknar adminbehörighet i katthemmet.',403);const w=await worker(home),session=await localSession(p,home);const response=await fetch(w.address+'/api/users/'+action,{method:'POST',headers:{'x-portal-secret':secret,'x-portal-origin':origin,'content-type':'application/json',cookie:'session='+session},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)fail(result.error||'Importen kunde inte slutföras.',response.status);return result};
+    if(url.pathname.endsWith('import-preview'))return send((await previewShelterImport(fields,context,request)).preview);
+    const result=await executeShelterImport(fields,context,request);for(const home of result.results)if(home.imported)audit.record({home:home.shelter_id,actor:p,action:'volunteers.imported',details:{imported:home.imported}});return send(result);
+   }
    if(/^\/api\/portal\/coordinators\/\d+$/.test(url.pathname)&&req.method==='PATCH'){
     if(!p)fail('Logga in för att fortsätta.',401);
     if(!house(target)||!['admin','superadmin'].includes(access(p,target)))fail('Du behöver adminbehörighet i detta katthem.',403);

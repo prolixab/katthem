@@ -224,6 +224,7 @@ async function body(req,maxLength=20000){const chunks=[];let size=0;for await(co
 function importEntries(p){
  if(typeof p.green!=='boolean')fail('Välj om importen ska grönmarkeras.');
  let entries;try{entries=parseVolunteersCsv(p.csv)}catch(e){fail(e.message)}
+ if(entries.some(entry=>entry.shelter!==undefined))fail('Import med kolumnen Katthem ska förhandsgranskas via portalens importfunktion.');
  for(const entry of entries)entry.green=p.green||entry.green;
  return entries;
 }
