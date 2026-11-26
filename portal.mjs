@@ -235,6 +235,24 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
    }
    if(url.pathname==='/api/branding'&&req.method==='GET'){target=requested||p?.selected||primary;if(!house(target))fail('Katthemmet finns inte.',404);return send(createBranding((await worker(target)).db).get())}
    if(url.pathname==='/api/portal'&&req.method==='GET')return send(publicList());
+   if(/^\/api\/portal\/coordinators\/\d+$/.test(url.pathname)&&req.method==='PATCH'){
+    if(!p)fail('Logga in för att fortsätta.',401);
+    if(!house(target)||!['admin','superadmin'].includes(access(p,target)))fail('Du behöver adminbehörighet i detta katthem.',403);
+    const fields=json(payload),id=Number(url.pathname.split('/').pop());
+    if(!fields||typeof fields.enabled!=='boolean'||Object.keys(fields).some(key=>key!=='enabled'))fail('Välj om personen ska vara samordnare.');
+    const w=await worker(target),u=w.db.prepare('SELECT id,role,active FROM users WHERE id=?').get(id);
+    if(!u)fail('Volontären finns inte.',404);
+    if(!u.active||!['volunteer','coordinator'].includes(u.role)||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,id)||w.db.prepare("SELECT 1 FROM engagements WHERE user_id=? AND status='purged'").get(id))fail('Välj en aktiv volontär eller samordnare. Administratörers roller ändras av superadmin.',403);
+    const role=fields.enabled?'coordinator':'volunteer',link=registry.prepare('SELECT * FROM shadows WHERE target=? AND local_id=?').get(target,id);
+    if(link){
+     const grant=registry.prepare('SELECT role FROM grants WHERE source=? AND user_id=? AND target=?').get(link.source,link.user_id,target),source=await worker(link.source),owner=source.db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(link.user_id);
+     if(!grant||!['volunteer','coordinator'].includes(grant.role)||!owner||link.source===primary&&owner.role==='superadmin'||registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(link.source,link.user_id))fail('Personens tilldelade åtkomst kan inte ändras här.',403);
+     if(!registry.prepare("UPDATE grants SET role=? WHERE source=? AND user_id=? AND target=? AND role=?").run(role,link.source,link.user_id,target,grant.role).changes)fail('Åtkomsten har ändrats. Öppna profilen igen.',409);
+     await ensureShadow({source:link.source,user_id:link.user_id,user:owner},target,role);
+    }else if(!w.db.prepare("UPDATE users SET role=? WHERE id=? AND active=1 AND role=?").run(role,id,u.role).changes)fail('Rollen har ändrats. Öppna profilen igen.',409);
+    audit.record({home:target,actor:p,action:'coordinator.updated',subject_id:id,details:{role}});
+    return send({ok:true});
+   }
    if(['/api/portal/my-bookings','/api/portal/my-bookings/calendar'].includes(url.pathname)&&req.method==='GET'){
     if(!p)fail('Logga in för att fortsätta.',401);
     const bookings=[];

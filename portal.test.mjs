@@ -350,7 +350,8 @@ test('Flera katthem: serverbehörighet, dataseparation, tilldelning, kalender oc
   const downloadRoute='portal/manage/backups/'+copy.id+'/download';assert.equal((await call(downloadRoute)).status,401);assert.equal((await call(downloadRoute,'GET',null,sameEmail.cookie)).status,403);assert.equal((await call(downloadRoute,'GET',null,newHomeLogin.cookie)).status,403);
   assert.equal((await call('portal/manage/backups/backup-0000000000000-000000000000/download','GET',null,sa.cookie)).status,404);
   const download=await call(downloadRoute,'GET',null,sa.cookie);assert.equal(download.status,200);assert.match(download.headers.get('content-type'),/application\/zip/);assert.match(download.headers.get('content-disposition'),/attachment; filename="katthem-backup-/);assert.equal(download.headers.get('cache-control'),'no-store');const zipBytes=Buffer.from(await download.arrayBuffer());assert.equal(zipBytes.readUInt32LE(0),0x04034b50);
-  assert.ok((await(await call('portal/audit','GET',null,sa.cookie)).json()).entries.some(e=>e.action==='backup.downloaded'));
+  // The audit is recorded after the response stream finishes on the server.
+  let downloadLogged=false;for(let attempt=0;attempt<30;attempt++){downloadLogged=(await(await call('portal/audit','GET',null,sa.cookie)).json()).entries.some(e=>e.action==='backup.downloaded');if(downloadLogged)break;await new Promise(resolve=>setTimeout(resolve,50))}assert.ok(downloadLogged);
 
   // The age rule follows the source account without copying its private birth date to the shadow.
   const agePersonResponse=await call('users','POST',{name:'Ung med åtkomst',email:'young-cross@example.se',password},sa.cookie,'huskvarna');assert.equal(agePersonResponse.status,200);const agePerson=(await agePersonResponse.json()).users.find(u=>u.email==='young-cross@example.se');
