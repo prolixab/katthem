@@ -777,3 +777,11 @@ Grönregeln är oförändrad: importerad/manuell erfarenhetsmarkering plus klar 
 
 ### Adminnotis efter tredje introduktionspasset
 När tre bokade arbetspass har avslutats och praktiken är markerad visas volontären i `introduction_pending`, även med ofullständig checklista (`awaiting_practical_review`). Alla admins och SA i aktuellt katthem ser samma notis på startsidan/administrationen. Den anger tre genomförda arbetspass, checklistestatus och rutinbekräftelse och öppnar introduktionsgranskningen. En post per volontär beräknas från aktuell status, så uppdateringar och flera admins skapar inga dubbletter. Notisen ligger kvar tills slutligt godkännande eller paus/inaktivering/avslut. Det är en portalnotis, inte ett mejlutskick. Volontärer och samordnare utan adminroll får inte andra personers notiser.
+
+### Antal per introduktionsstatus
+Adminöversikten Aktiva volontärer per katthem visar tre separata grupper: grönmarkerade, intro pågår och intro genomförd utan grönmarkering. De summerar till antalet aktiva volontärer och samordnare. Admin, styrelse och SA visas separat som en gemensam grupp, där en person med flera roller räknas en gång. Båda grupperna summerar till totalt antal aktiva konton i hemmet. Pausade, inaktiva, avslutade, pensionerade flyttkonton och implicit global SA-åtkomst räknas inte. En person med uttrycklig åtkomst i båda hemmen räknas i respektive hem. Detaljerade statusantal lämnas bara för hem där läsaren är admin/SA. Översiktens totaler påverkas inte av sökning eller listfilter; filtret Introduktion genomförd kan även visa gröna med färdig introduktion.
+
+Statusöversikten använder ett kompakt kort per katthem, tydligt totalantal och tre neutrala statusfält med färgpunkter. Förklaringen är hopfällbar under Så räknas antalen. Kort och statusfält anpassas till mobilbredd.
+
+### Radera felaktiga konton
+Kontoåtgärder samlas i en fällbar meny på profilen. Radera konto kräver inskriven e-postadress och kontrolleras på servern. Admin hanterar volontärer/samordnare, SA även styrelse/admin. Eget konto skyddas. Profil, introduktionssvar och bokningar gallras omedelbart, historiska bemanningstal anonymiseras. Närvarouppgifter tas bort. Konton med kopplingar till flera katthem spärras för direkt radering för att skydda fortsatt åtkomst; hantera åtkomst och engagemang först. Radering kan inte ångras via portalen.
