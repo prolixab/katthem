@@ -119,6 +119,20 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   return {source,userId,w,user,profile,accountW,identityEditable:w===accountW,linked:Boolean(link||registry.prepare('SELECT 1 FROM grants WHERE source=? AND user_id=?').get(source,userId)),localUser:local.db.prepare('SELECT * FROM users WHERE id=?').get(id)};
  }
  function profileValues(profile){return Object.fromEntries([...sharedProfileFields,'revision'].map(k=>[k,['animal_care_trained','volunteer_bag'].includes(k)?Boolean(profile[k]):profile[k]]))}
+ function linkedShelters(home,id){
+  const shadow=registry.prepare('SELECT source,user_id FROM shadows WHERE target=? AND local_id=?').get(home,id);
+  const source=shadow?.source||home,userId=shadow?.user_id||id;
+  const grants=new Set(registry.prepare('SELECT target FROM grants WHERE source=? AND user_id=?').all(source,userId).map(g=>g.target));
+  const links=new Map();
+  for(const entry of lifecycle.cluster(home,id)){
+   if(entry.home!==home)links.set(entry.home,'history');
+  }
+  for(const target of grants){
+   if(target!==home)links.set(target,'granted');
+  }
+  if(shadow)links.set(source,grants.has(home)?'home':'history');
+  return [...links].map(([id,status])=>({name:house(id).name,status}));
+ }
  // Internal collision addresses belong to local accounts, never to contact presentation.
  async function displayContactEmails(data,target,p){
   if(p&&data.user&&data.portal&&['admin','superadmin'].includes(data.user.role)){
@@ -136,7 +150,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
   function visit(value){if(!value||typeof value!=='object')return;for(const [key,item] of Object.entries(value)){if(key==='email'&&emails.has(item))value[key]=emails.get(item);else if(item&&typeof item==='object')visit(item)}}
   visit(data);
   if(data.my_profile&&p){const own=await sharedProfile(p.source,p.user_id);data.my_profile={...data.my_profile,...Object.fromEntries(['phone','messenger_url','birth_date','revision'].map(k=>[k,own.profile[k]])),name:own.user.name,email:own.user.email};if(data.portal)data.portal.profile_identity_editable=own.identityEditable;}
-  if(data.members)for(const m of data.members){if(!m.user_id)continue;try{const shared=await sharedProfile(target,m.user_id);if(shared.linked)m.shared_profile=true;}catch{}}
+  if(data.members)for(const m of data.members){if(!m.user_id)continue;m.linked_shelters=linkedShelters(target,m.user_id);try{const shared=await sharedProfile(target,m.user_id);if(shared.linked)m.shared_profile=true;}catch{}}
   return data;
  }
  async function syncGrantedProfiles(target){for(const g of registry.prepare('SELECT * FROM grants WHERE target=?').all(target)){const source=await worker(g.source),user=source.db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(g.user_id);if(user&&!registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(g.source,g.user_id))await ensureShadow({source:g.source,user_id:g.user_id,user},target,g.source===primary&&user.role==='superadmin'?'superadmin':g.role)}}
@@ -404,7 +418,7 @@ export async function createPortal({dataDir,host='127.0.0.1',port=3080,env=proce
      if(write&&(/^\/api\/users(?:\/|$)/.test(url.pathname)||/^\/api\/volunteers(?:\/|$)/.test(url.pathname))){const fields=json(payload),tw=await worker(target),id=Number(url.pathname.split('/')[3])||-1;const localId=url.pathname.startsWith('/api/volunteers/')?tw.db.prepare('SELECT user_id FROM member_profiles WHERE id=?').get(id)?.user_id:id;const managed=registry.prepare('SELECT * FROM shadows WHERE target=? AND local_id=?').get(target,localId??-1);const existing=localId?tw.db.prepare('SELECT * FROM users WHERE id=?').get(localId):null;const requestedRole=fields.account?.role||fields.role;if(registry.prepare('SELECT 1 FROM retired_accounts WHERE home=? AND user_id=?').get(target,localId??-1))fail('Kontot har flyttats till ett annat katthem och kan inte återaktiveras här.',403);
       if(url.pathname.startsWith('/api/volunteers/')&&req.method==='PUT'&&localId){const shared=await sharedProfile(target,localId);if(shared.linked&&sharedProfileFields.some(k=>Object.hasOwn(fields,k)&&String(fields[k])!==String(({...profileValues(shared.profile),name:shared.user.name,email:shared.user.email})[k])))fail('Uppgiften delas mellan katthemmen. Öppna Gemensamma profiluppgifter och spara där.',409);}
       if(req.method==='DELETE'&&/^\/api\/users\/\d+$/.test(url.pathname)){if(!['admin','superadmin'].includes(access(p,target))||target===p.source&&localId===p.user_id)fail('Du saknar behörighet att radera detta konto.',403);}
-      if(req.method==='DELETE'&&/^\/api\/users\/\d+$/.test(url.pathname)&&lifecycle.cluster(target,localId).length>1)fail('Kontot är kopplat till flera katthem. Ta bort tilldelad åtkomst eller hantera engagemanget i respektive katthem innan kontot raderas.',409);
+      if(req.method==='DELETE'&&/^\/api\/users\/\d+$/.test(url.pathname)&&lifecycle.cluster(target,localId).length>1)fail('Kontot är kopplat till flera katthem. Se Kopplade katthem på profilkortet. Återkallad åtkomst kan fortfarande ha kvar historik. Hantera kopplade konton via Engagemang och status.',409);
       if(managed){if(/^portal-[a-f0-9]{32}@access\.invalid$/.test(existing.email)&&Object.hasOwn(fields,'email')){const source=await worker(managed.source),canonical=source.db.prepare('SELECT email FROM users WHERE id=?').get(managed.user_id)?.email;if(fields.email!==canonical&&fields.email!==existing.email)fail('Ändra inloggningsadressen i personens ordinarie katthem.',403);fields.email=existing.email;payload=Buffer.from(JSON.stringify(fields));}const a=fields.account||fields;if((requestedRole&&requestedRole!==existing.role)||(a.active!==undefined&&a.active!==Boolean(existing.active))||a.password)fail('Ändra tilldelad åtkomst under Hantera katthem och åtkomst.',403)}
       if(target!==primary&&requestedRole==='superadmin'&&(!managed||existing.role!=='superadmin'))fail('Systemets superadmin skapas i det ursprungliga katthemmet.',403)
      }

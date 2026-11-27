@@ -247,6 +247,8 @@ Befintlig data ligger kvar orörd i det ursprungliga hemmet Huskvarna. Katthemst
 
 Inloggningen väljer det ordinarie hemmet. Tilldelad styrelse/admin använder sitt ordinarie lösenord och kan växla mellan tilldelade hem. För ett annat hem skapas en separat åtkomstidentitet med lokal bokningshistorik. Gemensamma profilfält hämtas från ordinarie kontots profil. Den kan inte användas för separat inloggning; åtkomsten kontrolleras mot ursprungskontot och tilldelningarna vid varje anrop. Ändringar i en annan persons uppdrag i ett hem ger inte åtkomst till fler hem. Återkallad åtkomst spärrar även den tilldelade identitetens kalenderprenumeration, medan historik behålls. Avstängning av ursprungskontot stoppar åtkomst till alla dess hem.
 
+I volontärlistan och i den öppnade profilen visar Kopplade katthem vilka andra hem som har en tilldelning, ett ordinarie konto eller en historikkoppling. Du kan söka på katthemmets namn i listan. Återkallad åtkomst och tidigare flyttar kan lämna kvar länkar som fortfarande spärrar direkt radering. Tilldelningar hanteras via Hantera katthem och åtkomst. Engagemang och status används för kopplade konton.
+
 Fullständig backup: stoppa portalen och kopiera hela DATA_DIR, inklusive shelters.sqlite, katthem.sqlite, shelters/ och varje hems e-postfiler/nycklar. En CSV-export gäller bara valt hem och innehåller inte central behörighetskonfiguration. Kör en portal per datamapp, inte flera repliker. Vid första uppgraderingen behöver tidigare inloggade logga in på nytt. Inga ytterligare katthem eller personliga tilldelningar skapas utan att superadmin gör det i gränssnittet.
 
 

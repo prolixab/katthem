@@ -13,6 +13,9 @@ test('Gemensam profil: tvåvägsredigering, revisionsskydd, rollskydd och korrek
  const b=(await(await call('portal/manage/shelters','POST',{name:'Värnamo',address:'Testgatan'},sa)).json()).id,c=(await(await call('portal/manage/shelters','POST',{name:'Hem C',address:'C'},sa)).json()).id;
  for(const [uid,role] of [[2,'admin'],[3,'volunteer']])assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:uid,target:b,role,enabled:true},sa)).status,200);
  let bs=await state(admin,b),homeState=await state(sa),person=bs.members.find(m=>m.email==='person3@test.local');assert.ok(person.shared_profile);const localId=person.user_id,rootId=homeState.members.find(m=>m.user_id===3).id;assert.deepEqual(Object.fromEntries(bs.portal.shelters.map(h=>[h.name,h.volunteer_count])),{Huskvarna:4,Värnamo:2});assert.equal(homeState.portal.shelters.find(h=>h.id===c).volunteer_count,0);
+ assert.deepEqual(person.linked_shelters,[{name:'Huskvarna',status:'home'}]);
+ assert.deepEqual(homeState.members.find(m=>m.id===rootId).linked_shelters,[{name:'Värnamo',status:'granted'}]);
+ assert.deepEqual(homeState.members.find(m=>m.user_id===4).linked_shelters,[]);
  for(const home of homeState.portal.shelters){assert.ok(home.volunteer_status);assert.equal(home.volunteer_status.total,home.volunteer_count);assert.equal(home.volunteer_status.volunteers+home.volunteer_status.administration,home.volunteer_count);assert.equal(home.volunteer_status.green+home.volunteer_status.intro_pending+home.volunteer_status.intro_completed,home.volunteer_status.volunteers);}assert.deepEqual(homeState.portal.shelters.find(h=>h.id==='huskvarna').volunteer_status,{green:0,intro_pending:2,intro_completed:0,volunteers:2,administration:2,total:4});assert.deepEqual(homeState.portal.shelters.find(h=>h.id===b).volunteer_status,{green:0,intro_pending:1,intro_completed:0,volunteers:1,administration:1,total:2});
  for(const cookie of [vol,coord]){const privateState=await state(cookie);assert.ok(privateState.portal.shelters.every(h=>h.volunteer_status===undefined));assert.equal((await call('volunteer-status','GET',null,cookie)).status,403);}
  const statusDb=new DatabaseSync(path.join(dir,'katthem.sqlite'));for(const group of homeState.checklist.groups)for(const item of group.items)statusDb.prepare('INSERT OR IGNORE INTO checklist_progress VALUES(3,?)').run(item.id);statusDb.prepare('UPDATE engagements SET needs_intro=1,practical_completed=1,independent_approved=1 WHERE user_id=3').run();statusDb.close();const statusState=await state(sa);assert.deepEqual(statusState.portal.shelters.find(h=>h.id==='huskvarna').volunteer_status,{green:0,intro_pending:1,intro_completed:1,volunteers:2,administration:2,total:4});
@@ -27,6 +30,9 @@ test('Gemensam profil: tvåvägsredigering, revisionsskydd, rollskydd och korrek
  assert.equal((await call('users/1','DELETE',{confirm_email:'person1@test.local'},sa)).status,403);
  assert.equal((await call('users/4','DELETE',{confirm_email:'fel@test.local'},admin)).status,400);
  assert.equal((await call('users/3','DELETE',{confirm_email:'person3@test.local'},sa)).status,409,'Länkade konton skyddas');
+ assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:3,target:b,enabled:false},sa)).status,200);
+ assert.deepEqual((await state(sa)).members.find(m=>m.id===rootId).linked_shelters,[{name:'Värnamo',status:'history'}]);
+ assert.equal((await call('users/3','DELETE',{confirm_email:'person3@test.local'},sa)).status,409,'Historikkopplingen förklarar spärren även efter återkallning');
  assert.equal((await call('users/4','DELETE',{confirm_email:'person4@test.local'},admin)).status,200);
  assert.ok(!(await state(sa)).users.some(u=>u.id===4));
  assert.equal((await call('login','POST',{email:'person4@test.local',password})).status,401);
