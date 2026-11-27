@@ -54,5 +54,13 @@ test('Samordnare: begränsad bemanning, skyddade adminfunktioner och separat åt
  const second=await(await call('state','GET',null,coord,home)).json();assert.equal(second.user.role,'coordinator');assert.equal((await call('staffing?start='+date+'&end='+date,'GET',null,coord,home)).status,200);assert.equal((await call('users','POST',{name:'Fel',email:'fel@test.local',password},coord,home)).status,403);
  assert.equal((await call('portal/manage/grants','POST',{source:'huskvarna',user_id:2,target:home,role:'coordinator',enabled:false},sa)).status,200);assert.equal((await call('state','GET',null,coord,home)).status,403);
  assert.equal((await call('users/2','PATCH',{role:'volunteer'},sa)).status,200);assert.equal((await call('staffing?start='+date+'&end='+date,'GET',null,coord,'huskvarna')).status,403);
+ const extraAccess={source:'huskvarna',user_id:2,target:home};
+ assert.equal((await call('portal/manage/grants','POST',{...extraAccess,role:'volunteer',enabled:true},sa)).status,200);
+ assert.equal((await call('users/2','PATCH',{active:false},sa,'huskvarna')).status,200);
+ const grants=async()=> (await (await call('portal/manage','GET',null,sa,home)).json()).grants;
+ const includesExtraAccess=list=>list.some(grant=>grant.source===extraAccess.source&&grant.user_id===extraAccess.user_id&&grant.target===home);
+ assert.ok(includesExtraAccess(await grants()));
+ assert.equal((await call('portal/manage/grants','POST',{...extraAccess,enabled:false},sa,home)).status,200);
+ assert.equal(includesExtraAccess(await grants()),false);
  }finally{await portal?.close();rmSync(dir,{recursive:true,force:true})}
 });
