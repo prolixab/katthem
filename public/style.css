@@ -180,3 +180,5 @@ input,select,textarea{min-width:0;max-width:100%}
  .sidebar>.nav{min-height:0;align-self:stretch;max-height:calc(100vh - 140px - env(safe-area-inset-top,0px));max-height:calc(100dvh - 140px - env(safe-area-inset-top,0px));overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
  main [id],#home-heading,#schedule-heading{scroll-margin-top:130px}
 }
+
+.member-status.is-introduced{background:#eaf0f7;color:var(--primary)}

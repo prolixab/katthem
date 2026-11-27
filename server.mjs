@@ -199,8 +199,8 @@ function checklistProgress(uid){const ids=checklist.idsFor(uid),checked=new Set(
 function publicUser(u,counts){const completed=counts.get(u.id)||0;return {checklist_progress:checklistProgress(u.id),last_login_at:u.last_login_at??null,welcome_email:passwordReset.welcomeStatus(u.id),last_presence_day:presence.last(u.id),engagement:engagements.get(u.id),id:u.id,name:u.name,email:u.email,role:u.role,active:u.active,completed_shifts:completed,green_qualifying_shifts:counts.green.get(u.id)||0,carried_shifts:u.carried_shifts||0,last_completed_at:counts.last.get(u.id)||null,inactive_month:engagements.get(u.id)?.status==='active'&&isInactive(u,counts.last.get(u.id),new Date(),activitySettings.get().inactive_days),green_manual:Boolean(u.green_manual),checklist_complete:checklistComplete(u.id),green:isGreen(u,counts.green.get(u.id)||0,checklistComplete(u.id))}}
 function shelterFor(uid){const shelter=resolveShelter(process.env.PORTAL_SHELTER_ID?'Huskvarna':db.prepare('SELECT shelter FROM member_profiles WHERE user_id=?').get(uid)?.shelter,db.prepare('SELECT location FROM volunteer_info WHERE id=1').get().location,db.prepare('SELECT code,revision,updated_at FROM door_access WHERE id=1').get());if(process.env.PORTAL_SHELTER_ID)shelter.name=currentShelterName();return shelter}
 function pendingIntroduction(user,engagement){
- return user.active&&engagement?.awaiting_approval
-  ?{id:user.id,name:user.name,routine_current:engagement.routine_current,practical_completed:Boolean(engagement.practical_completed)}
+ return user.active&&(engagement?.awaiting_approval||engagement?.awaiting_practical_review)
+  ?{id:user.id,name:user.name,routine_current:engagement.routine_current,practical_completed:Boolean(engagement.practical_completed),checklist_complete:Boolean(engagement.checklist_complete),practical_passes:engagement.practical_passes||0}
   :null;
 }
 function pendingIntroductions(user){

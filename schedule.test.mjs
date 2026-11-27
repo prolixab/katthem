@@ -63,6 +63,8 @@ test('Startsidenotiser: väntande checklistor visas för admin och försvinner e
  const source=appSource.split('\n').find(line=>line.startsWith('function introductionPendingPanel()'));
  const context=vm.createContext({state:{user:{role:'admin'},introduction_pending:[{id:2,name:'Ny volontär',routine_current:true}]},isAdmin:u=>['admin','superadmin'].includes(u.role),esc:s=>String(s)});
  const markup=vm.runInContext(source+';introductionPendingPanel()',context);assert.ok(markup.includes('Väntar på godkännande (1)'));assert.match(markup,/Ny volontär/);assert.match(markup,/data-review-introduction="2"/);
+ context.state.introduction_pending[0].practical_passes=3;context.state.introduction_pending[0].checklist_complete=false;const practical=vm.runInContext('introductionPendingPanel()',context);assert.match(practical,/Tre arbetspass genomförda/);assert.match(practical,/Checklistan behöver slutföras/);assert.equal((practical.match(/data-review-introduction="2"/g)||[]).length,1);
+
  context.state.user.role='volunteer';assert.equal(vm.runInContext('introductionPendingPanel()',context),'');context.state.user.role='admin';context.state.introduction_pending=[];assert.equal(vm.runInContext('introductionPendingPanel()',context),'');
 });
 
